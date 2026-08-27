@@ -21,3 +21,30 @@ export const REGISTERED_USER_PERMISSION_DEFAULTS = {
 	sorter_manage_rules: false, sorter_auto_apply: false,
 	converter_view: true, converter_run: true, converter_manage_settings: false
 };
+export function normalizeUserPermissions(input: any = {}, fallback: any = REGISTERED_USER_PERMISSION_DEFAULTS) {
+	return Object.fromEntries(USER_CAPABILITIES.map((key) => [key, Boolean(input?.[key] ?? fallback?.[key] ?? false)]));
+}
+
+export type RegistrationSettings = {
+	mode: RegistrationMode;
+	modes: RegistrationMode[];
+	defaultRole: 'user';
+	defaultPermissions: Record<string, boolean>;
+	pendingRequests: any[];
+};
+
+export async function readRegistrationSettings(includeRequests = true): Promise<RegistrationSettings> {
+	const supabase = getSupabaseAdmin();
+	const { data, error } = await supabase.from('orbitfs_settings').select('value')
+		.eq('scope_type','global').eq('scope_id','').eq('key','registration').maybeSingle();
+	if (error) throw error;
+	const current: any = data?.value && typeof data.value === 'object' ? data.value : {};
+	const mode: RegistrationMode = REGISTRATION_MODES.includes(current.mode) ? current.mode : 'off';
+	let pendingRequests: any[] = [];
+	if (includeRequests) {
+		const result = await supabase.from('orbitfs_registration_requests').select('*').eq('status','pending').order('requested_at');
+		if (result.error) throw result.error;
+		pendingRequests = (result.data ?? []).map(presentRegistrationRequest);
+	}
+	return { mode, modes: [...REGISTRATION_MODES], defaultRole: 'user', defaultPermissions: normalizeUserPermissions(current.defaultPermissions), pendingRequests };
+}
