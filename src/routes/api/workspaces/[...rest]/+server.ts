@@ -119,6 +119,11 @@ export async function PATCH({ params, request, cookies }: any) {
 			}
 			if (status === 'suspended' && !clean(body.suspensionReason ?? workspace.suspension_reason)) throw Object.assign(new Error('A suspension reason is required'), { status:400 });
 			if ((workspace.is_main || workspace.delete_protected || workspace.auto_delete_immune) && status === 'archived') throw Object.assign(new Error('This workspace is protected from archive/delete'), { status:409 });
+			if (status === 'active' && !isSystemAdmin(user) && !workspace.is_main) {
+				const other = await supabase.from('orbitfs_workspaces').update({ status:'offline',drive_state:'offline',mcp_ui_enabled:false,updated_at:now() })
+					.eq('owner_id',workspace.owner_id).neq('id',workspace.id).neq('is_main',true).eq('status','active');
+				if (other.error) throw other.error;
+			}
 			patch.status = status;
 			patch.drive_state = status === 'active' ? 'online' : 'offline';
 			if (status !== 'active') patch.mcp_ui_enabled = false;
@@ -273,7 +278,7 @@ export async function DELETE({ params, cookies, url }: any) {
 			await requireWorkspacePermission(user,workspace,'delete_workspace');
 			if (workspace.is_main || workspace.delete_protected || workspace.auto_delete_immune)
 				throw Object.assign(new Error('This workspace is protected from delete'), { status:409 });
-			const archived = await supabase.from('orbitfs_workspaces').update({ status:'archived',mcp_ui_enabled:false,updated_at:now() }).eq('id',workspace.id);
+			const archived = await supabase.from('orbitfs_workspaces').update({ status:'archived',drive_state:'offline',mcp_ui_enabled:false,updated_at:now() }).eq('id',workspace.id);
 			if (archived.error) throw archived.error;
 			await writeAudit({ actorUserId:user.id,workspaceId:workspace.id,action:'workspace.archive',targetType:'workspace',targetId:workspace.id });
 			return json({ ok:true,recoverable:true });
