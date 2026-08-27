@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { Cloud, Database, Eye, EyeOff, LoaderCircle, ShieldCheck, UserPlus } from '@lucide/svelte';
@@ -16,7 +15,7 @@
 
 	onMount(async () => {
 		const me = await fetch('/api/auth/me', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
-		if (me?.authenticated) await goto('/');
+		if (me?.authenticated) { window.location.replace('/'); return; }
 		const status = await fetch('/api/setup/status', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
 		firstRun = Boolean(status?.needsSetup);
 	});
@@ -33,7 +32,7 @@
 			});
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.error || 'Registration failed');
-			await goto('/');
+			window.location.assign('/');
 		} catch (err) { error = err instanceof Error ? err.message : 'Registration failed'; }
 		finally { submitting = false; }
 	}
