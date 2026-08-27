@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import JSZip from 'jszip';
 import { createHash, randomBytes } from 'node:crypto';
+import { Document, Packer, Paragraph, TextRun } from 'docx';
 import { requireUser, type OrbitUser } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { writeAudit } from '$lib/server/audit';
@@ -61,6 +62,19 @@ function publicUserPermissions(user: OrbitUser) {
 		profile_use: true,
 		file_use: true
 	};
+}
+
+const PERMISSION_ROLES = ['editor', 'contributor', 'viewer'] as const;
+const PERMISSION_ACTIONS = ['read', 'write', 'download', 'move', 'delete', 'create', 'share'] as const;
+
+function rolePermissionDefaults(role: string) {
+	if (role === 'editor') return { read: true, write: true, download: true, move: true, delete: true, create: true, share: true };
+	if (role === 'contributor') return { read: true, write: true, download: true, move: true, delete: false, create: true, share: true };
+	return { read: true, write: false, download: true, move: false, delete: false, create: false, share: false };
+}
+
+function permissionValues(row: any) {
+	return { read: row.can_view === true, write: row.can_edit === true, download: row.can_download === true, move: row.can_move === true, delete: row.can_delete === true, create: row.can_create === true, share: row.can_share === true };
 }
 
 async function workspaceRowsForPath(workspaceId: string, path: string) {
@@ -170,6 +184,22 @@ export async function GET({ params, request, cookies, url }) {
 				canManagePermissions: permissions.manage,
 				workspace
 			});
+		}
+
+		if (parts[0] === 'path-permissions') {
+			const subpath = normalizePath(url.searchParams.get('path') ?? '');
+			await requireCapability(user, workspace.id, subpath, 'manage');
+			const { data: rows, error } = await supabase.from('orbitfs_file_permissions').select('*').eq('workspace_id', workspace.id).eq('principal_type', 'role').in('principal_id', [...PERMISSION_ROLES]);
+			if (error) throw error;
+			const effective: Record<string, any> = {};
+			const explicit: Record<string, any> = {};
+			for (const role of PERMISSION_ROLES) {
+				const matching = (rows ?? []).filter((row) => row.principal_id === role && (!normalizePath(row.path_prefix) || subpath === normalizePath(row.path_prefix) || subpath.startsWith(`${normalizePath(row.path_prefix)}/`))).sort((a,b) => normalizePath(b.path_prefix).length - normalizePath(a.path_prefix).length);
+				const exact = (rows ?? []).find((row) => row.principal_id === role && normalizePath(row.path_prefix) === subpath);
+				effective[role] = matching[0] ? permissionValues(matching[0]) : rolePermissionDefaults(role);
+				if (exact) explicit[role] = permissionValues(exact);
+			}
+			return json({ path: subpath, roles: [...PERMISSION_ROLES], actions: [...PERMISSION_ACTIONS], effective, explicit });
 		}
 
 		if (parts[0] === 'file-access') {
@@ -351,11 +381,34 @@ export async function PUT({ params, request, cookies, url }) {
 	try {
 		const path = String(params.path || '');
 		const parts = path.split('/').filter(Boolean);
-		const { user, workspace } = await context(request, cookies);
-		if (parts[0] !== 'file') throw Object.assign(new Error('Not found'), { status: 404 });
+		const { user, workspace, supabase } = await context(request, cookies);
+		if (parts[0] === 'path-permissions') {
+			const body = await request.json().catch(() => ({}));
+			const subpath = normalizePath(body.path ?? '');
+			const role = String(body.role ?? '');
+			if (!PERMISSION_ROLES.includes(role as any)) throw Object.assign(new Error('Invalid workspace role'), { status: 400 });
+			await requireCapability(user, workspace.id, subpath, 'manage');
+			const values = body.permissions && typeof body.permissions === 'object' ? body.permissions : {};
+			await supabase.from('orbitfs_file_permissions').delete().eq('workspace_id', workspace.id).eq('path_prefix', subpath).eq('principal_type', 'role').eq('principal_id', role);
+			const { error } = await supabase.from('orbitfs_file_permissions').insert({ workspace_id: workspace.id, path_prefix: subpath, principal_type: 'role', principal_id: role, can_view: values.read === true, can_edit: values.write === true, can_download: values.download === true, can_move: values.move === true, can_delete: values.delete === true, can_create: values.create === true, can_share: values.share === true, can_manage_permissions: false, inherit: true });
+			if (error) throw error;
+			await writeAudit({ actorUserId: user.id, workspaceId: workspace.id, action: 'permissions.update', targetType: 'path', targetId: null, detail: { path: subpath, role } });
+			return json({ ok: true });
+		}
+		if (parts[0] !== 'file' && parts[0] !== 'document') throw Object.assign(new Error('Not found'), { status: 404 });
 		const body = await request.json().catch(() => ({}));
 		const subpath = normalizePath(body.path ?? url.searchParams.get('path') ?? 'untitled.txt');
 		await requireCapability(user, workspace.id, subpath, 'write');
+		if (parts[0] === 'document') {
+			if (!subpath.toLowerCase().endsWith('.docx')) throw Object.assign(new Error('Document editor currently supports DOCX files only'), { status: 415 });
+			const text = String(body.text ?? '');
+			const paragraphs = text.replace(/\r\n/g, '\n').split('\n').map((line) => new Paragraph({ children: [new TextRun(line)] }));
+			const document = new Document({ sections: [{ children: paragraphs.length ? paragraphs : [new Paragraph('')] }] });
+			const bytes = Buffer.from(await Packer.toBuffer(document));
+			const item = await writeFileBytes({ workspaceId: workspace.id, path: subpath, bytes, mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', userId: user.id });
+			await writeAudit({ actorUserId: user.id, workspaceId: workspace.id, action: 'document.write', targetType: 'file', targetId: item.id, detail: { path: subpath } });
+			return json({ ok: true, size: bytes.length });
+		}
 		const content = String(body.content ?? '');
 		const item = await writeFileBytes({ workspaceId: workspace.id, path: subpath, bytes: Buffer.from(content, 'utf8'), mimeType: 'text/plain; charset=utf-8', userId: user.id, preferText: true });
 		await writeAudit({ actorUserId: user.id, workspaceId: workspace.id, action: 'file.write', targetType: 'file', targetId: item.id, detail: { path: subpath } });
@@ -365,11 +418,29 @@ export async function PUT({ params, request, cookies, url }) {
 	}
 }
 
-export async function DELETE({ params, request, cookies }) {
+export async function DELETE({ params, request, cookies, url }) {
 	try {
 		const path = String(params.path || '');
 		const parts = path.split('/').filter(Boolean);
-		const { user, supabase } = await context(request, cookies);
+		const { user, supabase, workspace } = await context(request, cookies);
+		if (parts[0] === 'path-permissions') {
+			const subpath = normalizePath(url.searchParams.get('path') ?? '');
+			const role = String(url.searchParams.get('role') ?? '');
+			if (!PERMISSION_ROLES.includes(role as any)) throw Object.assign(new Error('Invalid workspace role'), { status: 400 });
+			await requireCapability(user, workspace.id, subpath, 'manage');
+			const deletion = await supabase.from('orbitfs_file_permissions').delete().eq('workspace_id', workspace.id).eq('path_prefix', subpath).eq('principal_type', 'role').eq('principal_id', role);
+			if (deletion.error) throw deletion.error;
+			await writeAudit({ actorUserId: user.id, workspaceId: workspace.id, action: 'permissions.reset', targetType: 'path', targetId: null, detail: { path: subpath, role } });
+			return json({ ok: true });
+		}
+		if (parts[0] === 'workspaces' && parts[1] && parts[2] === 'trash') {
+			if (workspace.id !== parts[1]) throw Object.assign(new Error('Select the workspace before emptying its trash'), { status: 409 });
+			await requireCapability(user, workspace.id, '_trash', 'delete');
+			const children = await listEntries(workspace.id, '_trash');
+			for (const child of children) await purgeEntry(workspace.id, `_trash/${child.name}`);
+			await writeAudit({ actorUserId: user.id, workspaceId: workspace.id, action: 'trash.empty', targetType: 'workspace', targetId: workspace.id, detail: { count: children.length } });
+			return json({ ok: true, purged: children.length });
+		}
 		if (parts[0] === 'share' && parts[1]) {
 			const { data: share } = await supabase.from('orbitfs_shares').select('*').eq('id', parts[1]).maybeSingle();
 			if (!share) throw Object.assign(new Error('Share link not found'), { status: 404 });
