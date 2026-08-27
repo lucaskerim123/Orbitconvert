@@ -32,12 +32,17 @@ export async function GET({ params, cookies }) {
 		const now = Date.now();
 		const wsById = new Map((workspaces.data ?? []).map((item) => [item.id, item]));
 		const result = (users.data ?? []).map((row) => {
-			const roles = (memberships.data ?? []).filter((m) => m.user_id === row.id).map((m) => ({
+			const memberRoles = (memberships.data ?? []).filter((m) => m.user_id === row.id).map((m) => ({
 				workspaceId:m.workspace_id,
 				workspaceName:wsById.get(m.workspace_id)?.name ?? 'Workspace',
 				role:m.role,
-				files:(files.data ?? []).filter((f) => f.workspace_id === m.workspace_id && f.created_by === row.id).length
+				files:(files.data ?? []).filter((f) => f.workspace_id === m.workspace_id).length
 			}));
+			const ownedRoles = (workspaces.data ?? []).filter((ws) => ws.created_by === row.id && !memberRoles.some((item) => item.workspaceId === ws.id)).map((ws) => ({
+				workspaceId:ws.id, workspaceName:ws.name, role:'owner',
+				files:(files.data ?? []).filter((f) => f.workspace_id === ws.id).length
+			}));
+			const roles = [...ownedRoles, ...memberRoles];
 			return {
 				username:row.username,
 				role:row.role,
@@ -49,7 +54,7 @@ export async function GET({ params, cookies }) {
 				workspaceRoles:roles,
 				workspaceCount:roles.length,
 				ownedWorkspaces:roles.filter((item) => item.role === 'owner').length,
-				fileCount:(files.data ?? []).filter((f) => f.created_by === row.id).length,
+				fileCount:roles.reduce((total, item) => total + item.files, 0),
 				activeSessions:(sessions.data ?? []).filter((s) => s.user_id === row.id && Date.parse(s.expires_at) > now).length,
 				lastIp:row.last_ip ?? '',
 				lastUserAgent:row.last_user_agent ?? '',
@@ -127,6 +132,27 @@ export async function POST({ params, request, cookies }) {
 		}).select('id').single();
 		if (created.error || !created.data) throw created.error ?? new Error('Could not create user');
 		await writeAudit({ actorUserId:actor.id, action:'user.create', targetType:'user', targetId:created.data.id, detail:{ role,status } });
+		return json({ ok:true });
+	} catch (error) { return failure(error); }
+}
+export async function DELETE({ params, cookies }) {
+	try {
+		await assertPanelLicensed();
+		const actor = await requireAdmin(cookies);
+		const username = decodeURIComponent(String(params.rest || '')).trim();
+		if (!username) return json({ error:'User not found' }, { status:404 });
+		const supabase = getSupabaseAdmin();
+		const target = await supabase.from('orbitfs_users').select('id,username,role').ilike('username', username).maybeSingle();
+		if (target.error) throw target.error;
+		if (!target.data) return json({ error:'User not found' }, { status:404 });
+		if (target.data.role === 'owner' || target.data.id === actor.id) return json({ error:'Protected user cannot be deleted' }, { status:403 });
+		await supabase.from('orbitfs_workspace_members').delete().eq('user_id',target.data.id);
+		await supabase.from('orbitfs_group_members').delete().eq('user_id',target.data.id);
+		await supabase.from('orbitfs_sessions').delete().eq('user_id',target.data.id);
+		await supabase.from('orbitfs_notifications').delete().eq('user_id',target.data.id);
+		const deleted = await supabase.from('orbitfs_users').delete().eq('id',target.data.id);
+		if (deleted.error) throw deleted.error;
+		await writeAudit({ actorUserId:actor.id, action:'user.delete', targetType:'user', targetId:target.data.id, detail:{ username:target.data.username } });
 		return json({ ok:true });
 	} catch (error) { return failure(error); }
 }

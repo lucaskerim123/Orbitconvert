@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
+import { writeAudit } from '$lib/server/audit';
 import { USER_CAPABILITIES, REGISTERED_USER_PERMISSION_DEFAULTS, normalizeUserPermissions } from '$lib/server/registration';
 
 async function groupList() {
@@ -31,14 +32,16 @@ export async function GET({ cookies }) {
 export async function POST({ request, cookies }) {
 	try {
 		await assertPanelLicensed();
-		await requireAdmin(cookies);
+		const actor = await requireAdmin(cookies);
 		const body = await request.json().catch(() => ({}));
 		const name = String(body.name ?? '').trim().slice(0,80);
 		if (name.length < 2) return json({ error:'Group name must be at least 2 characters' }, { status:400 });
 		const requestedMembers = Array.from(new Set<string>((Array.isArray(body.members) ? body.members : []).map((value: unknown) => String(value).trim()).filter(Boolean)));
 		const supabase = getSupabaseAdmin();
-		const users = requestedMembers.length ? await supabase.from('orbitfs_users').select('id,username').in('username',requestedMembers) : { data:[],error:null } as any;
+		const users = requestedMembers.length ? await supabase.from('orbitfs_users').select('id,username') : { data:[],error:null } as any;
 		if (users.error) throw users.error;
+		const requested = new Set(requestedMembers.map((value:string) => value.toLowerCase()));
+		users.data = (users.data ?? []).filter((row:any) => requested.has(row.username.toLowerCase()));
 		const found = new Set((users.data ?? []).map((row:any) => row.username.toLowerCase()));
 		const missing = requestedMembers.filter((username:string) => !found.has(username.toLowerCase()));
 		if (missing.length) return json({ error:`Unknown user${missing.length === 1 ? '' : 's'}: ${missing.join(', ')}` }, { status:400 });
@@ -59,6 +62,7 @@ export async function POST({ request, cookies }) {
 			const inserted = await supabase.from('orbitfs_group_members').insert((users.data ?? []).map((row:any) => ({ group_id:group.data.id,user_id:row.id })));
 			if (inserted.error) throw inserted.error;
 		}
+		await writeAudit({ actorUserId:actor.id, action:'usergroup.save', targetType:'usergroup', targetId:group.data.id, detail:{ name,members:requestedMembers } });
 		return json({ ok:true,groups:await groupList() });
 	} catch (error:any) { return json({ error:String(error?.message || 'Could not save group') }, { status:Number(error?.status || 500) }); }
 }
