@@ -37,7 +37,7 @@
 		saved = '';
 		try {
 			await api.patch('/config/paths', { values });
-			saved = 'Saved. Restart affected services to apply the new paths.';
+			saved = 'Saved cloud path labels.';
 			await load();
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Failed to save runtime paths';
@@ -54,7 +54,7 @@
 		<h1 class="flex items-center gap-2 text-xl font-semibold">
 			<FolderCog class="size-5" />Runtime paths
 		</h1>
-		<p class="text-sm text-muted-foreground">Folders and file locations used by OrbitFS services.</p>
+		<p class="text-sm text-muted-foreground">Logical storage and runtime locations used by OrbitFS cloud.</p>
 	</div>
 
 	{#if error}
@@ -68,7 +68,7 @@
 		<Card>
 			<CardHeader>
 				<CardTitle>Service paths</CardTitle>
-				<CardDescription>Only approved runtime path variables are editable.</CardDescription>
+				<CardDescription>Cloud path labels map to Vercel and Supabase resources.</CardDescription>
 			</CardHeader>
 			<CardContent>
 				<form class="space-y-4" onsubmit={save}>
@@ -77,7 +77,7 @@
 							<div class="flex items-center justify-between gap-2">
 								<label for={field.key} class="text-sm font-medium">{field.label}</label>
 								<span class="text-xs {field.exists ? 'text-success' : 'text-warning'}">
-									{field.exists ? 'Path found' : 'Path not found'}
+									{field.exists ? 'Configured' : 'Unavailable'}
 								</span>
 							</div>
 							<Input id={field.key} bind:value={values[field.key]} />
@@ -97,7 +97,7 @@
 		</Card>
 		<div class="flex gap-2 rounded-md border border-warning/30 bg-warning/10 p-3 text-sm">
 			<TriangleAlert class="mt-0.5 size-4 shrink-0" />
-			<span>Incorrect paths can stop services from starting. All path changes require a restart.</span>
+			<span>Cloud storage locations are managed by Vercel and Supabase.</span>
 		</div>
 	{/if}
 </div>

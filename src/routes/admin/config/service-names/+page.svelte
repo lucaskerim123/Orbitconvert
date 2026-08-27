@@ -31,7 +31,7 @@
 				api.patch('/config/service-names', { values: serviceValues }),
 				api.patch('/config/ports-urls', { values: endpointValues })
 			]);
-			saved = 'Saved. Restart affected services to apply changes.';
+			saved = 'Saved cloud runtime labels and endpoints.';
 		} catch (e) { error = e instanceof ApiError ? e.message : 'Save failed'; }
 		finally { saving = false; }
 	}
@@ -41,12 +41,12 @@
 <div class="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
 	<div>
 		<h1 class="flex items-center gap-2 text-xl font-semibold"><ServerCog class="size-5" />Services & endpoints</h1>
-		<p class="text-sm text-muted-foreground">Windows service names, network ports and service URLs used by OrbitFS.</p>
+		<p class="text-sm text-muted-foreground">Cloud runtime components and endpoints used by OrbitFS.</p>
 	</div>
 	{#if error}<p class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>{/if}
 	{#if loading}<div class="flex justify-center py-16"><LoaderCircle class="size-5 animate-spin" /></div>
 	{:else}<form class="space-y-5" onsubmit={save}>
-		<Card><CardHeader><CardTitle>Service names</CardTitle></CardHeader><CardContent class="space-y-4">
+		<Card><CardHeader><CardTitle>Runtime components</CardTitle></CardHeader><CardContent class="space-y-4">
 			{#each serviceFields as field (field.key)}
 				<div class="space-y-1.5"><label for={field.key} class="text-sm font-medium">{field.label}</label>
 					<Input id={field.key} bind:value={serviceValues[field.key]} /><p class="font-mono text-[11px] text-muted-foreground">{field.key}</p></div>
