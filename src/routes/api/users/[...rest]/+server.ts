@@ -17,7 +17,7 @@ function permissionsFor(row: any) {
 export async function GET({ params, cookies }) {
 	try {
 		await assertPanelLicensed();
-		await requireAdmin(cookies);
+		const actor = await requireAdmin(cookies);
 		if (String(params.rest || '')) return json({ error:'Not found' }, { status:404 });
 		const supabase = getSupabaseAdmin();
 		const [users, memberships, workspaces, files, sessions] = await Promise.all([
@@ -48,7 +48,7 @@ export async function GET({ params, cookies }) {
 				role:row.role,
 				status:row.status,
 				email:row.email ?? null,
-				protected:row.role === 'owner',
+				protected:row.id === actor.id,
 				banReason:row.ban_reason ?? '',
 				permissions:permissionsFor(row),
 				workspaceRoles:roles,
@@ -78,9 +78,9 @@ export async function POST({ params, request, cookies }) {
 			if (error) throw error;
 			if (!user) return json({ error:'User not found' }, { status:404 });
 			if (user.id === actor.id && parts[1] === 'ban') return json({ error:'You cannot ban your own account' }, { status:400 });
-			if (user.role === 'owner' && parts[1] === 'ban') {
-				const { count } = await supabase.from('orbitfs_users').select('*', { count:'exact', head:true }).eq('role','owner').eq('status','active');
-				if ((count ?? 0) <= 1) return json({ error:'At least one active owner is required' }, { status:400 });
+			if (['owner','admin'].includes(user.role) && parts[1] === 'ban') {
+				const { count } = await supabase.from('orbitfs_users').select('*', { count:'exact', head:true }).in('role',['owner','admin']).eq('status','active');
+				if ((count ?? 0) <= 1) return json({ error:'At least one active system administrator is required' }, { status:400 });
 			}
 			const body = await request.json().catch(() => ({}));
 			const patch = parts[1] === 'ban'
@@ -104,9 +104,9 @@ export async function POST({ params, request, cookies }) {
 		const { data:existing, error:lookupError } = await supabase.from('orbitfs_users').select('id,role,status').ilike('username', username).maybeSingle();
 		if (lookupError) throw lookupError;
 		if (!existing && !pin) return json({ error:'PIN must be 4-10 digits' }, { status:400 });
-		if (existing?.role === 'owner' && role !== 'owner') {
-			const { count } = await supabase.from('orbitfs_users').select('*', { count:'exact', head:true }).eq('role','owner').eq('status','active');
-			if ((count ?? 0) <= 1) return json({ error:'At least one active owner is required' }, { status:400 });
+		if (existing && ['owner','admin'].includes(existing.role) && (role === 'user' || status !== 'active')) {
+			const { count } = await supabase.from('orbitfs_users').select('*', { count:'exact', head:true }).in('role',['owner','admin']).eq('status','active');
+			if ((count ?? 0) <= 1) return json({ error:'At least one active system administrator is required' }, { status:400 });
 		}
 		const patch: any = {
 			email,
@@ -145,7 +145,11 @@ export async function DELETE({ params, cookies }) {
 		const target = await supabase.from('orbitfs_users').select('id,username,role').ilike('username', username).maybeSingle();
 		if (target.error) throw target.error;
 		if (!target.data) return json({ error:'User not found' }, { status:404 });
-		if (target.data.role === 'owner' || target.data.id === actor.id) return json({ error:'Protected user cannot be deleted' }, { status:403 });
+		if (target.data.id === actor.id) return json({ error:'You cannot delete your own account' }, { status:403 });
+		if (['owner','admin'].includes(target.data.role)) {
+			const { count } = await supabase.from('orbitfs_users').select('*',{count:'exact',head:true}).in('role',['owner','admin']).eq('status','active');
+			if ((count ?? 0) <= 1) return json({ error:'At least one active system administrator is required' }, { status:400 });
+		}
 		await supabase.from('orbitfs_workspace_members').delete().eq('user_id',target.data.id);
 		await supabase.from('orbitfs_group_members').delete().eq('user_id',target.data.id);
 		await supabase.from('orbitfs_sessions').delete().eq('user_id',target.data.id);
