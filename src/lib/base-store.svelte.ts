@@ -3,8 +3,9 @@ export type Workspace = {
 	name: string;
 	description: string;
 	slug: string;
-	status: 'active' | 'offline';
+	status: 'active' | 'offline' | 'archived';
 	permission: 'owner' | 'editor' | 'contributor' | 'viewer';
+	visibility: 'private' | 'shared' | 'public';
 	is_main: boolean;
 	createdAt: string;
 };
@@ -19,6 +20,7 @@ export type Profile = {
 	background: string;
 	relationship: string;
 	notes: string;
+	data: Record<string, unknown>;
 	updatedAt: string;
 };
 
@@ -29,30 +31,11 @@ export type FileEntry = {
 	kind: 'file' | 'folder';
 	content: string;
 	size: number;
+	mimeType: string | null;
 	updatedAt: string;
 };
-type State = {
-	currentWorkspaceId: string;
-	workspaces: Workspace[];
-	profiles: Profile[];
-	files: FileEntry[];
-};
 
-const now = () => new Date().toISOString();
-const makeId = (prefix: string) => `${prefix}-${crypto.randomUUID()}`;
-const slugify = (value: string) => value.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64);
-
-function defaultState(): State {
-	return {
-		currentWorkspaceId: 'workspace-user',
-		workspaces: [
-			{ id: 'workspace-public', name: 'Public Workspace', description: 'Shared public workspace', slug: 'public-workspace', status: 'active', permission: 'owner', is_main: true, createdAt: now() },
-			{ id: 'workspace-user', name: 'My Workspace', description: 'Private workspace', slug: 'my-workspace', status: 'active', permission: 'owner', is_main: false, createdAt: now() }
-		],
-		profiles: [],
-		files: []
-	};
-}
+type PanelPayload = { workspaces?: any[]; profiles?: any[]; files?: any[]; error?: string };
 
 class BaseStore {
 	workspaces = $state<Workspace[]>([]);
@@ -61,137 +44,135 @@ class BaseStore {
 	currentWorkspaceId = $state('');
 	ready = $state(false);
 	saving = $state(false);
-	error = $state('');	async init() {
-		if (this.ready) return;
-		let state = defaultState();
-		let loadedFromDb = false;
-		try {
-			const response = await fetch('/api/base/state');
-			if (!response.ok) throw new Error('Database load failed');
-			const payload = await response.json();
-			if (payload.state) {
-				state = { ...state, ...payload.state };
-				loadedFromDb = true;
-			}
-		} catch (error) {
-			this.error = error instanceof Error ? error.message : 'Database load failed';
-		}
-		this.workspaces = state.workspaces;
-		this.profiles = state.profiles;
-		this.files = state.files;
-		this.currentWorkspaceId = state.currentWorkspaceId || state.workspaces[0]?.id || '';
-		for (const workspace of this.workspaces) this.ensureCoreFolders(workspace.id);
-		this.ready = true;
-		if (!loadedFromDb) await this.persist();
+	error = $state('');
+
+	reset() {
+		this.workspaces = [];
+		this.profiles = [];
+		this.files = [];
+		this.currentWorkspaceId = '';
+		this.ready = false;
+		this.saving = false;
+		this.error = '';
 	}
 
-	private snapshot(): State {
-		return {
-			currentWorkspaceId: this.currentWorkspaceId,
-			workspaces: this.workspaces,
-			profiles: this.profiles,
-			files: this.files
-		};
+	async init() {
+		if (this.ready) return;
+		await this.reload();
 	}
-	async persist() {
-		if (!this.ready) return;
+
+	async reload() {
+		try {
+			const response = await fetch('/api/panel', { cache: 'no-store' });
+			const payload = await response.json() as PanelPayload;
+			if (response.status === 401) { this.reset(); return; }
+			if (!response.ok) throw new Error(payload.error || 'Base System load failed');
+			this.workspaces = (payload.workspaces ?? []).map((item) => ({
+				id: item.id,
+				name: item.name,
+				description: item.description ?? '',
+				slug: item.slug,
+				status: item.status ?? 'active',
+				permission: item.permission ?? 'viewer',
+				visibility: item.visibility ?? 'private',
+				is_main: Boolean(item.is_main),
+				createdAt: item.created_at
+			}));
+			this.profiles = (payload.profiles ?? []).map((item) => ({
+				id: item.id,
+				workspaceId: item.workspace_id,
+				name: item.name,
+				type: item.type,
+				classification: item.classification,
+				labels: item.labels ?? [],
+				background: item.background ?? '',
+				relationship: item.relationship ?? '',
+				notes: item.notes ?? '',
+				data: item.data ?? {},
+				updatedAt: item.updated_at
+			}));
+			this.files = (payload.files ?? []).map((item) => ({
+				id: item.id,
+				workspaceId: item.workspace_id,
+				path: item.path,
+				kind: item.kind,
+				content: item.content_text ?? '',
+				size: Number(item.size_bytes ?? 0),
+				mimeType: item.mime_type ?? null,
+				updatedAt: item.updated_at
+			}));
+			if (!this.workspaces.some((item) => item.id === this.currentWorkspaceId)) {
+				this.currentWorkspaceId = this.workspaces.find((item) => !item.is_main && item.permission === 'owner')?.id ?? this.workspaces[0]?.id ?? '';
+			}
+			this.error = '';
+			this.ready = true;
+		} catch (err) {
+			this.error = err instanceof Error ? err.message : 'Base System load failed';
+			this.ready = true;
+		}
+	}
+
+	private async run(action: string, payload: Record<string, unknown> = {}) {
 		this.saving = true;
 		try {
-			const response = await fetch('/api/base/state', {
-				method: 'PUT',
+			const response = await fetch('/api/panel', {
+				method: 'POST',
 				headers: { 'content-type': 'application/json' },
-				body: JSON.stringify({ state: this.snapshot() })
+				body: JSON.stringify({ action, ...payload })
 			});
-			if (!response.ok) throw new Error('Database save failed');
-			this.error = '';
-		} catch (error) {
-			this.error = error instanceof Error ? error.message : 'Database save failed';
-		} finally {
-			this.saving = false;
-		}
+			const result = await response.json();
+			if (!response.ok) throw new Error(result.error || 'Base System update failed');
+			await this.reload();
+			return result;
+		} catch (err) {
+			this.error = err instanceof Error ? err.message : 'Base System update failed';
+			return null;
+		} finally { this.saving = false; }
 	}
 
 	get currentWorkspace() {
 		return this.workspaces.find((item) => item.id === this.currentWorkspaceId) ?? null;
 	}
+
 	selectWorkspace(workspaceId: string) {
-		if (!this.workspaces.some((item) => item.id === workspaceId)) return;
-		this.currentWorkspaceId = workspaceId;
-		void this.persist();
+		if (this.workspaces.some((item) => item.id === workspaceId)) this.currentWorkspaceId = workspaceId;
 	}
 
 	createWorkspace(name: string, description = '') {
 		const clean = name.trim();
 		if (clean.length < 2) throw new Error('Workspace name must be at least 2 characters');
-		const workspace: Workspace = {
-			id: makeId('workspace'), name: clean, description: description.trim(),
-			slug: slugify(clean), status: 'active', permission: 'owner',
-			is_main: false, createdAt: now()
-		};
-		this.workspaces = [...this.workspaces, workspace];
-		this.currentWorkspaceId = workspace.id;
-		this.ensureCoreFolders(workspace.id);
-		void this.persist();
-		return workspace;
+		void this.run('workspace.create', { name: clean, description, visibility: 'private' }).then((result) => {
+			if (result?.item?.id) this.currentWorkspaceId = result.item.id;
+		});
 	}
-	updateWorkspace(workspaceId: string, changes: Partial<Pick<Workspace, 'name' | 'description' | 'status'>>) {
-		this.workspaces = this.workspaces.map((item) => item.id === workspaceId
-			? { ...item, ...changes, slug: changes.name ? slugify(changes.name) : item.slug }
-			: item);
-		void this.persist();
+
+	updateWorkspace(workspaceId: string, changes: Partial<Pick<Workspace, 'name' | 'description' | 'status' | 'visibility'>>) {
+		void this.run('workspace.update', { id: workspaceId, ...changes });
 	}
 
 	deleteWorkspace(workspaceId: string) {
 		const workspace = this.workspaces.find((item) => item.id === workspaceId);
 		if (!workspace || workspace.is_main) return false;
-		this.workspaces = this.workspaces.filter((item) => item.id !== workspaceId);
-		this.profiles = this.profiles.filter((item) => item.workspaceId !== workspaceId);
-		this.files = this.files.filter((item) => item.workspaceId !== workspaceId);
-		this.currentWorkspaceId = this.workspaces[0]?.id || '';
-		void this.persist();
+		void this.run('workspace.delete', { id: workspaceId });
 		return true;
 	}
 
 	profilesFor(workspaceId = this.currentWorkspaceId) {
 		return this.profiles.filter((item) => item.workspaceId === workspaceId);
 	}
+
 	createProfile(input: Pick<Profile, 'name' | 'type' | 'classification' | 'labels' | 'background' | 'relationship' | 'notes'>) {
 		if (!this.currentWorkspaceId) throw new Error('Select a workspace first');
-		const name = input.name.trim();
-		if (!name) throw new Error('Profile name is required');
-		const profile: Profile = {
-			id: makeId('profile'), workspaceId: this.currentWorkspaceId, name,
-			type: input.type.trim() || 'Person',
-			classification: input.classification.trim() || 'General',
-			labels: input.labels, background: input.background,
-			relationship: input.relationship, notes: input.notes,
-			updatedAt: now()
-		};
-		this.profiles = [...this.profiles, profile];
-		void this.persist();
-		return profile;
+		if (!input.name.trim()) throw new Error('Profile name is required');
+		void this.run('profile.create', { workspaceId: this.currentWorkspaceId, ...input });
 	}
 
 	updateProfile(profileId: string, changes: Partial<Profile>) {
-		this.profiles = this.profiles.map((item) => item.id === profileId
-			? { ...item, ...changes, updatedAt: now() }
-			: item);
-		void this.persist();
-	}
-	deleteProfile(profileId: string) {
-		this.profiles = this.profiles.filter((item) => item.id !== profileId);
-		void this.persist();
+		void this.run('profile.update', { id: profileId, ...changes });
 	}
 
-	ensureCoreFolders(workspaceId: string) {
-		for (const path of ['_trash', '_media']) {
-			if (!this.files.some((item) => item.workspaceId === workspaceId && item.path === path)) {
-				this.files = [...this.files, {
-					id: makeId('folder'), workspaceId, path, kind: 'folder',
-					content: '', size: 0, updatedAt: now()
-				}];
-			}
-		}
+	deleteProfile(profileId: string) {
+		void this.run('profile.delete', { id: profileId });
 	}
 
 	entriesFor(directory = '', workspaceId = this.currentWorkspaceId) {
@@ -201,49 +182,23 @@ class BaseStore {
 			return !item.path.slice(prefix.length).includes('/');
 		}).sort((a, b) => a.kind === b.kind ? a.path.localeCompare(b.path) : a.kind === 'folder' ? -1 : 1);
 	}
+
 	createFolder(directory: string, name: string) {
-		const clean = name.trim().replace(/[\\/]+/g, '-');
-		if (!clean) throw new Error('Folder name is required');
-		const path = [directory.replace(/\/$/, ''), clean].filter(Boolean).join('/');
-		if (this.files.some((item) => item.workspaceId === this.currentWorkspaceId && item.path === path)) {
-			throw new Error('That path already exists');
-		}
-		this.files = [...this.files, {
-			id: makeId('folder'), workspaceId: this.currentWorkspaceId,
-			path, kind: 'folder', content: '', size: 0, updatedAt: now()
-		}];
-		void this.persist();
+		if (!name.trim()) throw new Error('Folder name is required');
+		void this.run('file.create', { workspaceId: this.currentWorkspaceId, parentPath: directory, name, kind: 'folder' });
 	}
 
 	createFile(directory: string, name: string, content = '') {
-		const clean = name.trim().replace(/[\\/]+/g, '-');
-		if (!clean) throw new Error('File name is required');
-		const path = [directory.replace(/\/$/, ''), clean].filter(Boolean).join('/');
-		if (this.files.some((item) => item.workspaceId === this.currentWorkspaceId && item.path === path)) {
-			throw new Error('That path already exists');
-		}
-		this.files = [...this.files, {
-			id: makeId('file'), workspaceId: this.currentWorkspaceId,
-			path, kind: 'file', content,
-			size: new Blob([content]).size, updatedAt: now()
-		}];
-		void this.persist();
+		if (!name.trim()) throw new Error('File name is required');
+		void this.run('file.create', { workspaceId: this.currentWorkspaceId, parentPath: directory, name, kind: 'file', content });
 	}
 
 	updateFile(fileId: string, content: string) {
-		this.files = this.files.map((item) => item.id === fileId
-			? { ...item, content, size: new Blob([content]).size, updatedAt: now() }
-			: item);
-		void this.persist();
+		void this.run('file.update', { id: fileId, content });
 	}
 
 	deleteEntry(entry: FileEntry) {
-		const prefix = `${entry.path}/`;
-		this.files = this.files.filter((item) => !(
-			item.workspaceId === entry.workspaceId &&
-			(item.path === entry.path || item.path.startsWith(prefix))
-		));
-		void this.persist();
+		void this.run('file.delete', { id: entry.id });
 	}
 }
 
