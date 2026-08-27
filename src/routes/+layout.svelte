@@ -294,20 +294,10 @@
 		if (bootstrappedToken === token) return;
 		bootstrappedToken = token;
 
-		api
-			.get<{
-				user?: { username: string; role: 'owner' | 'admin' | 'user'; email?: string; permissions?: Record<string, boolean> };
-				username?: string;
-				role?: 'owner' | 'admin' | 'user';
-				email?: string;
-			}>('/me')
-			.then((res) =>
-				auth.setUser(res.user ?? { username: res.username!, role: res.role!, email: res.email })
-			)
-			.catch(() => {});
-		addons.load();
+		addons.load().then(() => {
+			if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+		});
 		workspace.load();
-		loadWorkspaceAddonAccess();
 		loadNotificationCount();
 		redirectIfLicenceInvalid(false);
 	});
@@ -320,18 +310,18 @@
 	// that hit the Files page fetch earlier.
 	onMount(() => {
 		function resync() {
-			if (auth.isAuthenticated) {
-				addons.load();
-				workspace.load();
-				loadWorkspaceAddonAccess();
-				loadNotificationCount();
-				redirectIfLicenceInvalid(true);
-			}
+			if (!auth.isAuthenticated) return;
+			addons.load().then(() => {
+				if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+			});
+			if (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces')) void workspace.load();
+			void loadNotificationCount();
+			void redirectIfLicenceInvalid(true);
 		}
 		function onVisible() {
 			if (document.visibilityState === 'visible') resync();
 		}
-		const interval = setInterval(resync, 60_000);
+		const interval = setInterval(resync, 300_000);
 		document.addEventListener('visibilitychange', onVisible);
 		return () => {
 			clearInterval(interval);
