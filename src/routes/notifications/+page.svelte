@@ -1,27 +1,40 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { Bell, CheckCheck, Info, TriangleAlert } from '@lucide/svelte';
-	let notifications = $state<any[]>([]);
+	import { api, ApiError } from '$lib/api';
+	import { Badge, Button, Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui';
+	import { Bell, LoaderCircle, Inbox } from '@lucide/svelte';
+
+	type Notice = { id: string; title: string; message: string; severity: 'info' | 'warning' | 'critical' | 'system'; createdAt: string; createdBy: string; read: boolean };
+	let notices = $state<Notice[]>([]);
+	let loading = $state(true);
 	let error = $state('');
+	const unread = $derived(notices.filter((n) => !n.read).length);
+
 	async function load() {
-		const response = await fetch('/api/notifications', { cache: 'no-store' });
-		const payload = await response.json();
-		if (!response.ok) { error = payload.error || 'Could not load notifications'; return; }
-		notifications = payload.notifications ?? [];
+		loading = true; error = '';
+		try { notices = (await api.get<{ notifications: Notice[] }>('/notifications')).notifications; }
+		catch (err) { error = err instanceof ApiError ? err.message : 'Failed to load notifications'; }
+		finally { loading = false; }
 	}
-	onMount(() => { void load(); });
-	async function act(action: string, id?: string) {
-		await fetch('/api/notifications', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, id }) });
-		await load();
+	async function markRead(notice: Notice) {
+		if (notice.read) return;
+		await api.post('/notifications/' + notice.id + '/read');
+		notice.read = true; notices = [...notices];
 	}
+	load();
 </script>
-<div class="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
-	<header class="flex items-end justify-between gap-3"><div><p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Base System</p><h1 class="text-2xl font-semibold tracking-tight">Notifications</h1><p class="mt-1 text-sm text-muted-foreground">System and account messages.</p></div><button class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted" onclick={() => act('readAll')}><CheckCheck class="size-4" /> Mark all read</button></header>
-	{#if error}<div class="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}
-	<section class="space-y-3">
-		{#if notifications.length === 0}<div class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No notifications.</div>{/if}
-		{#each notifications as item (item.id)}
-			<article class="rounded-xl border bg-card p-4 shadow-sm {item.read_at ? 'opacity-70' : ''}"><div class="flex gap-3">{#if item.level === 'warning' || item.level === 'error'}<TriangleAlert class="mt-0.5 size-5 shrink-0 text-warning" />{:else}<Info class="mt-0.5 size-5 shrink-0 text-primary" />{/if}<div class="min-w-0 flex-1"><div class="flex items-start justify-between gap-3"><div><h2 class="font-medium">{item.title}</h2><p class="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{item.body}</p><p class="mt-2 text-xs text-muted-foreground">{new Date(item.created_at).toLocaleString()}</p></div>{#if !item.read_at}<button class="rounded-md border px-2 py-1 text-xs hover:bg-muted" onclick={() => act('read', item.id)}>Mark read</button>{/if}</div></div></div></article>
-		{/each}
-	</section>
+
+<div class="mx-auto max-w-4xl space-y-5 p-4 md:p-6">
+	<header class="overflow-hidden rounded-2xl border border-border/80 bg-card shadow-xl shadow-black/20">
+		<div class="flex items-center justify-between gap-3 border-b border-border/70 bg-muted/20 px-5 py-4">
+			<div><p class="text-xs font-semibold uppercase tracking-wide text-primary">Message centre</p><h1 class="flex items-center gap-2 text-2xl font-semibold"><Bell class="size-6" />Notifications</h1><p class="text-sm text-muted-foreground">Global messages, alerts, and system notices.</p></div>
+			<Badge variant={unread ? 'warning' : 'secondary'}>{unread} unread</Badge>
+		</div>
+	</header>
+	{#if loading}<div class="flex justify-center py-16"><LoaderCircle class="animate-spin" /></div>
+	{:else if error}<div class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</div>
+	{:else if notices.length === 0}<Card><CardContent class="flex flex-col items-center gap-2 py-16 text-center text-muted-foreground"><Inbox class="size-9" /><p>No notifications.</p></CardContent></Card>
+	{:else}<div class="space-y-3">{#each notices as notice (notice.id)}<Card class="border-border/80 shadow-sm {notice.severity === 'system' ? 'border-destructive/50 bg-destructive/10' : !notice.read ? 'border-primary/50 bg-primary/5' : 'bg-card'}">
+		<CardHeader><div class="flex items-start justify-between gap-3"><div><p class="mb-1 text-xs font-semibold uppercase tracking-wide {notice.severity === 'system' ? 'text-destructive' : 'text-muted-foreground'}">{notice.severity === 'system' ? 'OrbitFS System' : notice.createdBy}</p><CardTitle class={notice.severity === 'system' ? 'text-destructive' : ''}>{notice.title}</CardTitle></div><Badge variant={notice.severity === 'critical' || notice.severity === 'system' ? 'destructive' : notice.severity === 'warning' ? 'warning' : 'secondary'}>{notice.severity === 'system' ? 'System' : notice.severity}</Badge></div></CardHeader>
+		<CardContent class="space-y-3"><p class="whitespace-pre-wrap text-sm">{notice.message}</p><div class="flex items-center justify-between text-xs text-muted-foreground"><span>{new Date(notice.createdAt).toLocaleString()}</span>{#if !notice.read}<Button size="sm" variant="outline" onclick={() => markRead(notice)}>Mark read</Button>{/if}</div></CardContent>
+	</Card>{/each}</div>{/if}
 </div>

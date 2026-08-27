@@ -1,15 +1,157 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { Plus, Save, Settings } from '@lucide/svelte';
-	let settings = $state<any[]>([]), key = $state(''), valueText = $state('{}'), error = $state(''), message = $state('');
-	async function load() { const r = await fetch('/api/admin', { cache: 'no-store' }); const p = await r.json(); if (!r.ok) { error = p.error || 'Could not load settings'; return; } settings = p.settings ?? []; }
-	onMount(() => { void load(); });
-	async function save(scopeType: string, scopeId: string, settingKey: string, value: unknown) { error = ''; message = ''; const r = await fetch('/api/admin', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'setting.save', scopeType, scopeId, key: settingKey, value }) }); const p = await r.json(); if (!r.ok) { error = p.error || 'Save failed'; return false; } message = 'Saved'; await load(); return true; }
-	async function create() { try { const value = JSON.parse(valueText); if (await save('global', '', key.trim(), value)) { key = ''; valueText = '{}'; } } catch { error = 'Value must be valid JSON'; } }
+	import { api, ApiError } from '$lib/api';
+	import { Card, CardHeader, CardTitle, CardDescription, CardContent, Button, Input } from '$lib/components/ui';
+	import { Settings2, FolderCog, Save, LoaderCircle, HardDriveDownload } from '@lucide/svelte';
+
+	type RuntimeConfig = { config: Record<string, Record<string, unknown>> };
+
+	let runtime = $state<RuntimeConfig['config'] | null>(null);
+	let runtimeLoading = $state(true);
+	let runtimeError = $state('');
+
+	async function loadRuntime() {
+		runtimeLoading = true;
+		runtimeError = '';
+		try {
+			const res = await api.get<RuntimeConfig>('/config/runtime');
+			runtime = res.config;
+		} catch (err) {
+			runtimeError = err instanceof ApiError ? err.message : 'Failed to load runtime config';
+		} finally {
+			runtimeLoading = false;
+		}
+	}
+	loadRuntime();
+
+	let driveClientId = $state('');
+	let driveLoading = $state(true);
+	let driveSaving = $state(false);
+	let driveError = $state('');
+	let driveSaved = $state(false);
+
+	async function loadDrive() {
+		driveLoading = true;
+		driveError = '';
+		try {
+			const res = await api.get<{ clientId: string | null }>('/drive-config');
+			driveClientId = res.clientId ?? '';
+		} catch (err) {
+			driveError = err instanceof ApiError ? err.message : 'Failed to load Drive config';
+		} finally {
+			driveLoading = false;
+		}
+	}
+	loadDrive();
+
+	async function saveDrive(e: Event) {
+		e.preventDefault();
+		if (!driveClientId.trim()) return;
+		driveSaving = true;
+		driveError = '';
+		driveSaved = false;
+		try {
+			await api.patch('/system/drive-config', { clientId: driveClientId.trim() });
+			driveSaved = true;
+		} catch (err) {
+			driveError = err instanceof ApiError ? err.message : 'Save failed';
+		} finally {
+			driveSaving = false;
+		}
+	}
 </script>
-<div class="mx-auto max-w-5xl space-y-6 p-4 sm:p-6">
-	<header><div class="flex items-center gap-2 text-primary"><Settings class="size-5" /><p class="text-xs font-semibold uppercase tracking-[0.16em]">Administration</p></div><h1 class="mt-1 text-2xl font-semibold tracking-tight">Base System settings</h1><p class="mt-1 text-sm text-muted-foreground">Cloud-safe global, workspace and user configuration stored in Supabase.</p></header>
-	{#if error}<div class="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}{#if message}<div class="rounded-lg border px-4 py-3 text-sm">{message}</div>{/if}
-	<section class="rounded-xl border bg-card p-4"><h2 class="font-semibold">Add global setting</h2><div class="mt-3 grid gap-3 sm:grid-cols-[1fr_1.5fr_auto]"><input class="h-10 rounded-md border border-input bg-background px-3 text-sm" bind:value={key} placeholder="registration.mode" /><input class="h-10 rounded-md border border-input bg-background px-3 font-mono text-sm" bind:value={valueText} placeholder="JSON value" /><button class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50" disabled={!key.trim()} onclick={create}><Plus class="size-4" /> Add</button></div><p class="mt-2 text-xs text-muted-foreground">Examples: &quot;open&quot;, true, 30, or a JSON object.</p></section>
-	<div class="space-y-3">{#each settings as item (item.id)}<article class="rounded-xl border bg-card p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="flex items-center gap-2"><span class="rounded-full border px-2 py-0.5 text-xs">{item.scope_type}</span><h2 class="font-mono text-sm font-semibold">{item.key}</h2></div><p class="mt-1 text-xs text-muted-foreground">Scope ID: {item.scope_id || 'global'}</p></div><button class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted" onclick={() => save(item.scope_type, item.scope_id, item.key, item.value)}><Save class="size-4" /> Save</button></div><textarea class="mt-3 min-h-24 w-full rounded-md border border-input bg-background p-3 font-mono text-xs" value={JSON.stringify(item.value, null, 2)} onchange={(e) => { try { item.value = JSON.parse(e.currentTarget.value); error = ''; } catch { error = `Invalid JSON for ${item.key}`; } }}></textarea></article>{/each}{#if settings.length === 0}<div class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No custom settings yet.</div>{/if}</div>
+
+<div class="mx-auto max-w-3xl space-y-6 p-4 md:p-6">
+	<div>
+		<h1 class="flex items-center gap-2 text-xl font-semibold tracking-tight">
+			<Settings2 class="size-5 text-muted-foreground" />
+			Config
+		</h1>
+		<p class="text-sm text-muted-foreground">Post-install runtime settings, services, URLs, paths, add-ons, and Google Drive.</p>
+	</div>
+
+	<Card>
+		<CardHeader>
+			<CardTitle class="flex items-center gap-2">
+				<FolderCog class="size-4 text-muted-foreground" />
+				Runtime
+			</CardTitle>
+			<CardDescription>Current runtime values. Edit them from the runtime/services pages below; some changes require a restart.</CardDescription>
+		</CardHeader>
+		<CardContent>
+			{#if runtimeLoading}
+				<div class="flex items-center gap-2 text-sm text-muted-foreground">
+					<LoaderCircle class="size-4 animate-spin" />
+					Loading&hellip;
+				</div>
+			{:else if runtimeError}
+				<p class="text-sm text-destructive">{runtimeError}</p>
+			{:else if runtime}
+				<div class="space-y-3">
+					{#each Object.entries(runtime) as [section, values] (section)}
+						<div>
+							<p class="text-xs font-medium tracking-wide text-muted-foreground uppercase">{section}</p>
+							<dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-sm">
+								{#each Object.entries(values ?? {}) as [k, v] (k)}
+									<dt class="text-muted-foreground">{k}</dt>
+									<dd class="truncate font-mono text-xs">{JSON.stringify(v)}</dd>
+								{/each}
+							</dl>
+						</div>
+					{/each}
+				</div>
+			{/if}
+		</CardContent>
+	</Card>
+
+	<div class="grid gap-3 md:grid-cols-2">
+		<a href="/admin/config/install" class="rounded-lg border border-border bg-card p-4 text-sm hover:bg-accent/40">
+			<p class="font-medium">Install / linking</p>
+			<p class="text-muted-foreground">Core panel, licence API, MCP URL, deploy mode, and add-on roots.</p>
+		</a>
+		<a href="/admin/config/paths" class="rounded-lg border border-border bg-card p-4 text-sm hover:bg-accent/40">
+			<p class="font-medium">Runtime paths</p>
+			<p class="text-muted-foreground">Storage, workspaces, system, and plugin/add-on directories.</p>
+		</a>
+		<a href="/admin/config/ports-urls" class="rounded-lg border border-border bg-card p-4 text-sm hover:bg-accent/40">
+			<p class="font-medium">Ports / URLs</p>
+			<p class="text-muted-foreground">Frontend API base, panel public URL, licence API, and MCP URL.</p>
+		</a>
+		<a href="/admin/config/service-names" class="rounded-lg border border-border bg-card p-4 text-sm hover:bg-accent/40">
+			<p class="font-medium">Service names</p>
+			<p class="text-muted-foreground">Panel, backend, MCP, Cloudflare, and optional service names.</p>
+		</a>
+	</div>
+
+	<Card>
+		<CardHeader>
+			<CardTitle class="flex items-center gap-2">
+				<HardDriveDownload class="size-4 text-muted-foreground" />
+				Google Drive
+			</CardTitle>
+			<CardDescription>
+				Shared OAuth client ID for the whole panel. One admin sets it once, and each user still signs into their own Google account through it.
+			</CardDescription>
+		</CardHeader>
+		<CardContent>
+			{#if driveLoading}
+				<div class="flex items-center gap-2 text-sm text-muted-foreground">
+					<LoaderCircle class="size-4 animate-spin" />
+					Loading&hellip;
+				</div>
+			{:else}
+				<form class="flex flex-wrap items-end gap-2" onsubmit={saveDrive}>
+					<div class="min-w-64 flex-1 space-y-1.5">
+						<label for="drive-client-id" class="text-sm font-medium">OAuth client ID</label>
+						<Input id="drive-client-id" bind:value={driveClientId} placeholder="xxxxx.apps.googleusercontent.com" />
+					</div>
+					<Button type="submit" size="sm" disabled={driveSaving}>
+						{#if driveSaving}<LoaderCircle class="size-4 animate-spin" />{:else}<Save />{/if}
+						Save
+					</Button>
+				</form>
+				{#if driveError}<p class="mt-2 text-sm text-destructive">{driveError}</p>{/if}
+				{#if driveSaved}<p class="mt-2 text-sm text-success">Saved.</p>{/if}
+			{/if}
+		</CardContent>
+	</Card>
 </div>

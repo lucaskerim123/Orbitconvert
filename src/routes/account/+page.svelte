@@ -1,59 +1,187 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { CheckCircle2, KeyRound, LoaderCircle, Save, UserRound } from '@lucide/svelte';
+	import { api, ApiError } from '$lib/api';
+	import { auth } from '$lib/auth.svelte';
+	import { Card, CardHeader, CardTitle, CardDescription, CardContent, Badge, Button, Input } from '$lib/components/ui';
+	import { CircleUser, Mail, Lock, LoaderCircle, Save, Folder, Bell } from '@lucide/svelte';
 
-	let user = $state<any>(null);
-	let displayName = $state('');
-	let email = $state('');
-	let currentPassword = $state('');
-	let newPassword = $state('');
-	let confirmPassword = $state('');
-	let busy = $state(false);
-	let message = $state('');
+	type Profile = {
+		username: string;
+		email: string | null;
+		role: 'owner' | 'owner' | 'admin' | 'user';
+		owned_workspaces?: number;
+		workspace_memberships?: number;
+		active_sessions?: number;
+	};
+
+	let profile = $state<Profile | null>(null);
+	let loading = $state(true);
 	let error = $state('');
 
-	onMount(async () => {
-		const payload = await fetch('/api/account', { cache: 'no-store' }).then((r) => r.json());
-		user = payload.user;
-		displayName = user?.display_name ?? '';
-		email = user?.email ?? '';
-	});
+	let email = $state('');
+	let emailSaving = $state(false);
+	let emailError = $state('');
+	let emailSaved = $state(false);
 
-	async function call(action: string, data: Record<string, unknown>) {
-		busy = true; error = ''; message = '';
+	let newPin = $state('');
+	let confirmPin = $state('');
+	let pinSaving = $state(false);
+	let pinError = $state('');
+	let pinSaved = $state(false);
+
+	async function load() {
+		loading = true;
+		error = '';
 		try {
-			const response = await fetch('/api/account', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...data }) });
-			const payload = await response.json();
-			if (!response.ok) throw new Error(payload.error || 'Update failed');
-			if (payload.user) user = payload.user;
-			message = 'Saved';
-			return true;
-		} catch (err) { error = err instanceof Error ? err.message : 'Update failed'; return false; }
-		finally { busy = false; }
+			const res = await api.get<{ user: Profile }>('/me');
+			profile = res.user;
+			email = res.user.email ?? '';
+		} catch (err) {
+			error = err instanceof ApiError ? err.message : 'Failed to load profile';
+		} finally {
+			loading = false;
+		}
+	}
+	load();
+
+	async function saveEmail(e: Event) {
+		e.preventDefault();
+		emailSaving = true;
+		emailError = '';
+		emailSaved = false;
+		try {
+			const res = await api.patch<{ user: Profile }>('/me', { email });
+			profile = res.user;
+			auth.setUser({ username: res.user.username, role: res.user.role, email: res.user.email ?? undefined });
+			emailSaved = true;
+		} catch (err) {
+			emailError = err instanceof ApiError ? err.message : 'Save failed';
+		} finally {
+			emailSaving = false;
+		}
 	}
 
-	async function saveProfile() { await call('profile.update', { displayName, email }); }
-	async function changePassword() {
-		if (newPassword !== confirmPassword) return void (error = 'New passwords do not match');
-		if (await call('password.change', { currentPassword, newPassword })) { currentPassword = ''; newPassword = ''; confirmPassword = ''; }
+	async function savePin(e: Event) {
+		e.preventDefault();
+		pinError = '';
+		pinSaved = false;
+		if (!/^\d{4,10}$/.test(newPin)) {
+			pinError = 'PIN must be 4-10 digits';
+			return;
+		}
+		if (newPin !== confirmPin) {
+			pinError = "PINs don't match";
+			return;
+		}
+		pinSaving = true;
+		try {
+			await api.patch('/me', { pin: newPin });
+			newPin = '';
+			confirmPin = '';
+			pinSaved = true;
+		} catch (err) {
+			pinError = err instanceof ApiError ? err.message : 'Save failed';
+		} finally {
+			pinSaving = false;
+		}
 	}
 </script>
 
-<div class="mx-auto max-w-4xl space-y-6 p-4 sm:p-6">
-	<header><p class="text-xs font-semibold uppercase tracking-[0.16em] text-primary">Base System</p><h1 class="text-2xl font-semibold tracking-tight">Account</h1><p class="mt-1 text-sm text-muted-foreground">Manage your OrbitFS account and login credentials.</p></header>
-	{#if error}<div class="rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}
-	{#if message}<div class="flex items-center gap-2 rounded-lg border px-4 py-3 text-sm"><CheckCircle2 class="size-4" /> {message}</div>{/if}
-
-	<div class="grid gap-5 lg:grid-cols-2">
-		<section class="rounded-xl border bg-card p-5 shadow-sm">
-			<div class="flex items-center gap-2"><UserRound class="size-5" /><h2 class="font-semibold">Profile</h2></div>
-			<p class="mt-1 text-sm text-muted-foreground">Username: <span class="text-foreground">{user?.username ?? 'Loading…'}</span> · Role: <span class="capitalize text-foreground">{user?.role ?? ''}</span></p>
-			<div class="mt-4 space-y-3"><div><label class="mb-1.5 block text-sm font-medium">Display name</label><input class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={displayName} /></div><div><label class="mb-1.5 block text-sm font-medium">Email</label><input class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" type="email" bind:value={email} /></div><button class="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50" disabled={busy} onclick={saveProfile}>{#if busy}<LoaderCircle class="size-4 animate-spin" />{:else}<Save class="size-4" />{/if} Save profile</button></div>
-		</section>
-
-		<section class="rounded-xl border bg-card p-5 shadow-sm">
-			<div class="flex items-center gap-2"><KeyRound class="size-5" /><h2 class="font-semibold">Change password</h2></div>
-			<div class="mt-4 space-y-3"><input class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" type="password" placeholder="Current password" bind:value={currentPassword} /><input class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" type="password" placeholder="New password" bind:value={newPassword} /><input class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" type="password" placeholder="Confirm new password" bind:value={confirmPassword} /><button class="inline-flex h-10 items-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50" disabled={busy || !currentPassword || !newPassword || !confirmPassword} onclick={changePassword}><KeyRound class="size-4" /> Update password</button></div>
-		</section>
+<div class="mx-auto max-w-xl space-y-6 p-4 md:p-6">
+	<div>
+		<h1 class="flex items-center gap-2 text-xl font-semibold tracking-tight">
+			<CircleUser class="size-5 text-muted-foreground" />
+			User control panel
+		</h1>
+		<p class="text-sm text-muted-foreground">Your account, access and security controls.</p>
 	</div>
+
+	{#if error}
+		<div class="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+			{error}
+		</div>
+	{/if}
+
+	{#if loading}
+		<div class="flex items-center justify-center gap-2 py-16 text-muted-foreground">
+			<LoaderCircle class="size-5 animate-spin" />
+			Loading&hellip;
+		</div>
+	{:else if profile}
+		<Card>
+			<CardHeader>
+				<div class="flex items-center justify-between">
+					<CardTitle>{profile.username}</CardTitle>
+					<Badge variant={profile.role === 'owner' ? 'success' : profile.role === 'admin' ? 'default' : 'secondary'}>{profile.role}</Badge>
+				</div>
+			</CardHeader>
+			{#if profile.owned_workspaces != null}
+				<CardContent class="flex gap-6 text-sm text-muted-foreground">
+					<span>{profile.owned_workspaces} owned workspaces</span>
+					<span>{profile.workspace_memberships} memberships</span>
+					<span>{profile.active_sessions} active sessions</span>
+				</CardContent>
+			{/if}
+		</Card>
+
+		<div class="grid gap-3 sm:grid-cols-2">
+			<a href="/" class="rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/40">
+				<div class="flex items-center gap-2 font-medium"><Folder class="size-4" />Files</div>
+				<p class="mt-1 text-xs text-muted-foreground">Open files you have permission to access.</p>
+			</a>
+			<a href="/notifications" class="rounded-lg border border-border bg-card p-4 transition-colors hover:bg-accent/40">
+				<div class="flex items-center gap-2 font-medium"><Bell class="size-4" />Notifications</div>
+				<p class="mt-1 text-xs text-muted-foreground">Review account and storage updates.</p>
+			</a>
+		</div>
+
+		<Card>
+			<CardHeader>
+				<CardTitle class="flex items-center gap-2">
+					<Mail class="size-4 text-muted-foreground" />
+					Email
+				</CardTitle>
+			</CardHeader>
+			<CardContent>
+				<form class="flex flex-wrap items-end gap-2" onsubmit={saveEmail}>
+					<Input type="email" bind:value={email} placeholder="you@example.com" class="max-w-xs flex-1" />
+					<Button type="submit" size="sm" disabled={emailSaving}>
+						{#if emailSaving}<LoaderCircle class="size-4 animate-spin" />{:else}<Save />{/if}
+						Save
+					</Button>
+				</form>
+				{#if emailError}<p class="mt-2 text-sm text-destructive">{emailError}</p>{/if}
+				{#if emailSaved}<p class="mt-2 text-sm text-success">Saved.</p>{/if}
+			</CardContent>
+		</Card>
+
+		<Card>
+			<CardHeader>
+				<CardTitle class="flex items-center gap-2">
+					<Lock class="size-4 text-muted-foreground" />
+					Change PIN
+				</CardTitle>
+				<CardDescription>4-10 digits.</CardDescription>
+			</CardHeader>
+			<CardContent>
+				<form class="space-y-3" onsubmit={savePin}>
+					<div class="grid gap-3 sm:grid-cols-2">
+						<div class="space-y-1.5">
+							<label for="new-pin" class="text-sm font-medium">New PIN</label>
+							<Input id="new-pin" type="password" bind:value={newPin} />
+						</div>
+						<div class="space-y-1.5">
+							<label for="confirm-pin" class="text-sm font-medium">Confirm PIN</label>
+							<Input id="confirm-pin" type="password" bind:value={confirmPin} />
+						</div>
+					</div>
+					{#if pinError}<p class="text-sm text-destructive">{pinError}</p>{/if}
+					{#if pinSaved}<p class="text-sm text-success">PIN updated.</p>{/if}
+					<Button type="submit" size="sm" disabled={pinSaving}>
+						{#if pinSaving}<LoaderCircle class="size-4 animate-spin" />{:else}<Save />{/if}
+						Update PIN
+					</Button>
+				</form>
+			</CardContent>
+		</Card>
+	{/if}
 </div>
