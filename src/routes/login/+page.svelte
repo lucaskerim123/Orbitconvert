@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { Cloud, Eye, EyeOff, LoaderCircle, LockKeyhole, UserPlus, Database, ShieldCheck } from '@lucide/svelte';
 
@@ -13,9 +12,9 @@
 	onMount(async () => {
 		try {
 			const me = await fetch('/api/auth/me', { cache: 'no-store' }).then((r) => r.json());
-			if (me.authenticated) return void (await goto('/'));
+			if (me.authenticated) { window.location.replace('/'); return; }
 			const status = await fetch('/api/setup/status', { cache: 'no-store' }).then((r) => r.json());
-			if (status.needsSetup) return void (await goto('/register?setup=1'));
+			if (status.needsSetup) { window.location.replace('/register?setup=1'); return; }
 		} finally { checking = false; }
 	});
 
@@ -30,7 +29,7 @@
 			});
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.error || 'Login failed');
-			await goto('/');
+			window.location.assign('/');
 		} catch (err) { error = err instanceof Error ? err.message : 'Login failed'; }
 		finally { submitting = false; }
 	}
