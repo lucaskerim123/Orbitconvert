@@ -389,14 +389,15 @@
 		}
 		const id = selectedId;
 		const detailData = await api.get<{
-			members: Member[]; overrides: FileOverride[]; management: ManagementResponse; messages: WorkspaceMessage[];
+			members: Member[]; overrides: FileOverride[]; management: ManagementResponse; messages: WorkspaceMessage[]; profile?: any;
 		}>(`/workspaces/${id}/details`);
 		members = detailData.members;
 		overrides = detailData.overrides;
 		management = detailData.management;
 		messages = detailData.messages;
 		try {
-			const profileData = await api.get<any>(`/profiles/${id}/catalog`);
+			const profileData = detailData.profile;
+			if (!profileData) throw new Error('Profile summary unavailable');
 			profileRoleOverrides = profileData.roleOverrides ?? {};
 			profileMemberOverrides = profileData.memberOverrides ?? {};
 			profileStatistics = profileData.statistics ?? null;
