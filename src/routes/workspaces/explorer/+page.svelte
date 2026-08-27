@@ -12,7 +12,6 @@
 	import PluginSlot from '$lib/plugin-slot.svelte';
 	import WorkspaceFileToolbarActions from '$lib/workspace-file-toolbar-actions.svelte';
 	import { Button } from '$lib/components/ui';
-	import FileViewer from '$lib/components/file-viewer.svelte';
 	import FolderPicker from '$lib/components/folder-picker.svelte';
 	import ShareModal from '$lib/components/share-modal.svelte';
 	import PermissionsModal from '$lib/components/permissions-modal.svelte';
@@ -125,6 +124,14 @@
 	let driveAccessToken = $state('');
 	let busyPath = $state<string | null>(null);
 	let viewerPath = $state<string | null>(null);
+	let FileViewerComponent = $state<any>(null);
+	let fileViewerLoading = $state(false);
+	async function ensureFileViewer() {
+		if (FileViewerComponent || fileViewerLoading) return;
+		fileViewerLoading = true;
+		try { FileViewerComponent = (await import('$lib/components/file-viewer.svelte')).default; }
+		finally { fileViewerLoading = false; }
+	}
 	let sharePath = $state<{ path: string; name: string } | null>(null);
 	let renamingPath = $state<string | null>(null);
 	let renameValue = $state('');
@@ -226,6 +233,10 @@
 
 	$effect(() => {
 		if (creatingFolder) void tick().then(() => newFolderInput?.focus());
+	});
+
+	$effect(() => {
+		if (viewerPath) void ensureFileViewer();
 	});
 
 	$effect(() => {
@@ -1191,7 +1202,8 @@
 
 {#if viewerPath}
 	<PluginSlot slot="file-view-actions" path={viewerPath} name={basename(viewerPath)} kind="file" workspaceId={fileContext.currentId} />
-	<FileViewer
+	{#if FileViewerComponent}
+	<FileViewerComponent
 		path={viewerPath}
 		onClose={() => (viewerPath = null)}
 		onSaved={load}
@@ -1213,6 +1225,9 @@
 		}}
 		onTrash={trashPath}
 	/>
+	{:else}
+		<div class="fixed inset-0 z-40 flex items-center justify-center bg-background text-muted-foreground"><LoaderCircle class="size-6 animate-spin" /> Loading viewer…</div>
+	{/if}
 {/if}
 
 {#if movePaths}
