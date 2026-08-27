@@ -8,22 +8,21 @@ const clean = (value: unknown) => String(value ?? '').trim();
 export async function GET({ cookies }) {
 	await requireAdmin(cookies);
 	const supabase = getSupabaseAdmin();
-	const [users, groups, groupMembers, workspaceMembers, workspaces, audit, license, settings] = await Promise.all([
+	const [users, groups, groupMembers, workspaceMembers, workspaces, audit, settings] = await Promise.all([
 		supabase.from('orbitfs_users').select('id,username,display_name,email,role,status,avatar_url,last_seen_at,created_at,updated_at').order('created_at'),
 		supabase.from('orbitfs_groups').select('*').order('name'),
 		supabase.from('orbitfs_group_members').select('*'),
 		supabase.from('orbitfs_workspace_members').select('*'),
 		supabase.from('orbitfs_workspaces').select('id,name,slug,visibility,status,is_main').order('is_main', { ascending: false }).order('name'),
 		supabase.from('orbitfs_audit_log').select('*').order('created_at', { ascending: false }).limit(300),
-		supabase.from('orbitfs_license').select('*').eq('id', 'primary').maybeSingle(),
 		supabase.from('orbitfs_settings').select('*').order('scope_type').order('key')
 	]);
-	const failure = [users, groups, groupMembers, workspaceMembers, workspaces, audit, license, settings].find((result) => result.error);
+	const failure = [users, groups, groupMembers, workspaceMembers, workspaces, audit, settings].find((result) => result.error);
 	if (failure?.error) return json({ error: failure.error.message }, { status: 500 });
 	return json({
 		users: users.data ?? [], groups: groups.data ?? [], groupMembers: groupMembers.data ?? [],
 		workspaceMembers: workspaceMembers.data ?? [], workspaces: workspaces.data ?? [],
-		audit: audit.data ?? [], license: license.data ?? null, settings: settings.data ?? []
+		audit: audit.data ?? [], settings: settings.data ?? []
 	});
 }
 
@@ -43,7 +42,7 @@ export async function POST({ request, cookies }) {
 		if (id === actor.id && patch.status === 'disabled') return json({ error: 'You cannot disable your own account' }, { status: 400 });
 		const { data: existing } = await supabase.from('orbitfs_users').select('role,status').eq('id', id).maybeSingle();
 		if (!existing) return json({ error: 'User not found' }, { status: 404 });
-		if (existing.role === 'owner' && (patch.role && patch.role !== 'owner' || patch.status === 'disabled')) {
+		if (existing.role === 'owner' && ((patch.role && patch.role !== 'owner') || patch.status === 'disabled')) {
 			const { count } = await supabase.from('orbitfs_users').select('*', { count: 'exact', head: true }).eq('role', 'owner').eq('status', 'active');
 			if ((count ?? 0) <= 1) return json({ error: 'At least one active owner is required' }, { status: 400 });
 		}
@@ -110,20 +109,6 @@ export async function POST({ request, cookies }) {
 		const { data, error } = await supabase.from('orbitfs_notifications').insert({ user_id: targetUserId, title, body: String(body.body ?? ''), level }).select('*').single();
 		if (error) return json({ error: error.message }, { status: 500 });
 		await writeAudit({ actorUserId: actor.id, action, targetType: 'notification', targetId: data.id, detail: { targetUserId, level } });
-		return json({ ok: true, item: data });
-	}
-
-	if (action === 'license.save') {
-		const payload = {
-			id: 'primary', license_key: clean(body.licenseKey) || null,
-			status: ['unconfigured','active','expired','invalid','disabled'].includes(body.status) ? body.status : 'unconfigured',
-			plan: clean(body.plan) || null, licensed_to: clean(body.licensedTo) || null,
-			expires_at: body.expiresAt || null, metadata: typeof body.metadata === 'object' && body.metadata ? body.metadata : {},
-			updated_at: new Date().toISOString()
-		};
-		const { data, error } = await supabase.from('orbitfs_license').upsert(payload).select('*').single();
-		if (error) return json({ error: error.message }, { status: 500 });
-		await writeAudit({ actorUserId: actor.id, action, targetType: 'license', targetId: 'primary', detail: { status: payload.status, plan: payload.plan } });
 		return json({ ok: true, item: data });
 	}
 
