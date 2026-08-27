@@ -37,6 +37,7 @@
 	},
 	"dependencies": {
 		"@lucide/svelte": "^1.25.0",
-		"@supabase/supabase-js": "^2.112.4"
+		"@supabase/supabase-js": "^2.112.4",
+		"jszip": "^3.10.1"
 	}
 }
