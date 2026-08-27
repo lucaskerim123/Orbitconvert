@@ -16,7 +16,7 @@ export type FolderPermissions = {
 
 const rank: Record<WorkspaceRole, number> = { viewer: 0, contributor: 1, editor: 2, owner: 3 };
 export const STORAGE_BUCKET = 'orbitfs-files';
-export const CORE_ROOTS = new Set(['_trash', '_media']);
+export const CORE_ROOTS = new Set(['_sorter', '_trash', '_archive', '_media']);
 
 export function normalizePath(value: unknown) {
 	return String(value ?? '')
