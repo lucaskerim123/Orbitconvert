@@ -31,7 +31,7 @@
 		</nav>
 		<div class="hidden px-5 pt-5 text-xs text-muted-foreground lg:block">
 			<div class="flex items-center gap-2"><Database class="size-3.5" /> Supabase database</div>
-			<p class="mt-2 leading-relaxed">Phase 1 persists Base Panel state in Supabase. MCP, Sorter and add-ons are excluded.</p>
+			<p class="mt-2 leading-relaxed">Standalone cloud runtime. Base Panel state persists in Supabase and the app runs on Vercel.</p>
 		</div>
 	</aside>
 
