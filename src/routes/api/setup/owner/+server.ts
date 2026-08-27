@@ -1,6 +1,5 @@
 import { json } from '@sveltejs/kit';
 import { createSession, hashPassword } from '$lib/server/auth';
-import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { ensureCoreFolders } from '$lib/server/base-compat';
 import { USER_CAPABILITIES } from '$lib/server/registration';
