@@ -138,9 +138,7 @@
 	let notificationLoading = $state(false);
 	let notificationError = $state('');
 	let notifications = $state<Notice[]>([]);
-	let canAccessWorkspaceMcp = $state(false);
 	let workspaceMode = $state(false);
-	let mcpAccessWorkspaces = $state<Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }>>([]);
 	let apexAccessMode = $state<'admins_only' | 'workspace_owners' | 'workspace_permissions'>('workspace_owners');
 	let apexAccessWorkspaces = $state<Array<{ permission?: string; management_permissions?: Record<string, boolean> }>>([]);
 	let bootstrappedToken = $state<string | null>(null);
@@ -155,14 +153,6 @@
 			workspaceMode = true;
 			apexAccessMode = 'workspace_owners';
 			apexAccessWorkspaces = [];
-		}
-		try {
-			const access = await api.get<{ mcpWorkspaces?: Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }> }>('/mcp/access');
-			mcpAccessWorkspaces = access.mcpWorkspaces ?? [];
-			canAccessWorkspaceMcp = auth.isAdmin || mcpAccessWorkspaces.length > 0;
-		} catch {
-			mcpAccessWorkspaces = [];
-			canAccessWorkspaceMcp = auth.isAdmin || (!workspaceMode && auth.user?.permissions?.mcp_use === true);
 		}
 	}
 
@@ -234,11 +224,6 @@
 	function canAccessItem(group: { label: string; roles?: string[] }, item: { permission?: string; roles?: string[] }) {
 		if (item.roles?.length && (!auth.user?.role || !item.roles.includes(auth.user.role))) return false;
 		if (auth.isAdmin) return true;
-		if (group.label === 'MCP') {
-			if (!item.permission) return canAccessWorkspaceMcp;
-			if (item.permission === 'mcp_use') return canAccessWorkspaceMcp;
-			return mcpAccessWorkspaces.some((workspace) => workspace.mcpAllowed && workspace.management_permissions?.[item.permission!] === true);
-		}
 		if (group.label === 'Apex System') {
 			if (apexAccessMode === 'admins_only') return false;
 			if (!item.permission) return apexAccessWorkspaces.some((workspace) => workspace.permission === 'owner');
@@ -672,8 +657,7 @@
 			type="button"
 			onclick={() => (mobileNavOpen = true)}
 			class="flex h-14 min-w-0 flex-col items-center justify-center gap-0.5 px-1 text-[10px] font-medium leading-tight {mobileNavOpen ||
-			page.url.pathname.startsWith('/admin') ||
-			page.url.pathname.startsWith('/mcp')
+			page.url.pathname.startsWith('/admin')
 				? 'text-primary'
 				: 'text-muted-foreground'}"
 		>

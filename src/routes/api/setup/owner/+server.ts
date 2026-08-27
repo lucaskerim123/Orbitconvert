@@ -44,6 +44,7 @@ export async function POST({ request, cookies, url, getClientAddress }) {
 				if (created.error || !created.data) throw created.error ?? new Error('Could not create Public Workspace');
 				publicWorkspaceId = created.data.id;
 			}
+			if (!publicWorkspaceId) throw new Error('Public Workspace ID unavailable');
 			const member = await supabase.from('orbitfs_workspace_members').upsert({ workspace_id:publicWorkspaceId, user_id:user.id, role:'owner' }, { onConflict:'workspace_id,user_id' });
 			if (member.error) throw member.error;
 			await ensureCoreFolders(publicWorkspaceId, user.id);

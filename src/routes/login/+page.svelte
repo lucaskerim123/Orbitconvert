@@ -4,9 +4,9 @@
 	import { auth } from '$lib/auth.svelte';
 	import { api, ApiError } from '$lib/api';
 	import { Button, Input, Card, CardContent } from '$lib/components/ui';
-	import { HardDrive, Eye, EyeOff, LoaderCircle, ShieldCheck, Plug, Database, Server, UserPlus } from '@lucide/svelte';
+	import { HardDrive, Eye, EyeOff, LoaderCircle, ShieldCheck, Database, Server, UserPlus } from '@lucide/svelte';
 
-	type HealthKey = 'panel' | 'api' | 'mcp';
+	type HealthKey = 'panel' | 'api';
 	type HealthItem = { key: HealthKey; label: string; detail: string; online: boolean | null; icon: typeof Server };
 	type RegistrationStatus = { mode: 'off' | 'open' | 'approval_queue'; available: boolean; queueMode: boolean };
 
@@ -20,7 +20,7 @@
 	let newPin = $state('');
 	let confirmPin = $state('');
 	let lastChecked = $state('checking');
-	let health = $state<Record<HealthKey, boolean | null>>({ panel: null, api: null, mcp: null });
+	let health = $state<Record<HealthKey, boolean | null>>({ panel: null, api: null });
 	let mode = $state<'login' | 'register'>('login');
 	let registration = $state<RegistrationStatus>({ mode: 'off', available: false, queueMode: false });
 	let registerUsername = $state('');
@@ -33,7 +33,6 @@
 	const statusItems = $derived<HealthItem[]>([
 		{ key: 'panel', label: 'Panel', detail: 'public shell', online: health.panel, icon: Server },
 		{ key: 'api', label: 'API', detail: 'backend', online: health.api, icon: Database },
-		{ key: 'mcp', label: 'MCP', detail: 'connector', online: health.mcp, icon: Plug }
 	]);
 
 	async function check(url: string) {
@@ -66,11 +65,8 @@
 			mode = 'login';
 		}
 
-		const [panelOk, mcpOk] = await Promise.all([
-			check('/'),
-			check('/mcp/health')
-		]);
-		health = { api: Boolean(setupStatus), panel: panelOk, mcp: mcpOk };
+		const panelOk = await check('/');
+		health = { api: Boolean(setupStatus), panel: panelOk };
 		lastChecked = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 	}
 

@@ -178,7 +178,6 @@
 					<div class="flex flex-wrap gap-2">
 						<Button variant="outline" onclick={() => test('storage', String(model?.config.storageRoot ?? ''))}>Test storage</Button>
 						<Button variant="outline" onclick={() => test('plugins', String(model?.config.pluginRoot ?? ''))}>Test plugin path</Button>
-						<Button variant="outline" onclick={() => test('mcp', String(model?.config.mcpUrl ?? ''))}>Test MCP link</Button>
 					</div>
 				</CardContent>
 			</Card>

@@ -35,7 +35,7 @@ export async function POST({ request, cookies }) {
 		const body = await request.json().catch(() => ({}));
 		const name = String(body.name ?? '').trim().slice(0,80);
 		if (name.length < 2) return json({ error:'Group name must be at least 2 characters' }, { status:400 });
-		const requestedMembers = [...new Set((Array.isArray(body.members) ? body.members : []).map((value:any) => String(value).trim()).filter(Boolean))];
+		const requestedMembers = Array.from(new Set<string>((Array.isArray(body.members) ? body.members : []).map((value: unknown) => String(value).trim()).filter(Boolean)));
 		const supabase = getSupabaseAdmin();
 		const users = requestedMembers.length ? await supabase.from('orbitfs_users').select('id,username').in('username',requestedMembers) : { data:[],error:null } as any;
 		if (users.error) throw users.error;
