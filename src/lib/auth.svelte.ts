@@ -13,7 +13,7 @@ class AuthStore {
 			.then((r) => r.json())
 			.then((data) => {
 				if (data?.authenticated && data.user) {
-					const role = data.user.role === 'member' ? 'user' : data.user.role;
+					const role = data.user.role;
 					this.user = { ...data.user, role };
 					this.token = 'cookie-session';
 				}
@@ -23,7 +23,7 @@ class AuthStore {
 	}
 
 	set(_token: string, user: User) { this.token = 'cookie-session'; this.user = user; this.ready = true; }
-	setUser(user: User) { this.user = { ...user, role: user.role === ('member' as any) ? 'user' : user.role }; this.token = 'cookie-session'; this.ready = true; }
+	setUser(user: User) { this.user = user; this.token = 'cookie-session'; this.ready = true; }
 	clear() { this.token = null; this.user = null; this.ready = true; }
 	get isAuthenticated() { return this.token !== null && this.user !== null; }
 	get isAdmin() { return this.user?.role === 'owner' || this.user?.role === 'admin'; }

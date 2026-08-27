@@ -37,12 +37,12 @@ export async function POST({ request, cookies }) {
 		const patch: Record<string, unknown> = {};
 		if (body.displayName !== undefined) patch.display_name = clean(body.displayName);
 		if (body.email !== undefined) patch.email = clean(body.email).toLowerCase() || null;
-		if (['owner','admin','member','viewer'].includes(body.role)) patch.role = body.role;
-		if (['active','disabled'].includes(body.status)) patch.status = body.status;
-		if (id === actor.id && patch.status === 'disabled') return json({ error: 'You cannot disable your own account' }, { status: 400 });
+		if (['owner','admin','user'].includes(body.role)) patch.role = body.role;
+		if (['active','inactive','banned'].includes(body.status)) patch.status = body.status;
+		if (id === actor.id && patch.status !== undefined && patch.status !== 'active') return json({ error: 'You cannot disable your own account' }, { status: 400 });
 		const { data: existing } = await supabase.from('orbitfs_users').select('role,status').eq('id', id).maybeSingle();
 		if (!existing) return json({ error: 'User not found' }, { status: 404 });
-		if (existing.role === 'owner' && ((patch.role && patch.role !== 'owner') || patch.status === 'disabled')) {
+		if (existing.role === 'owner' && ((patch.role && patch.role !== 'owner') || patch.status !== undefined && patch.status !== 'active')) {
 			const { count } = await supabase.from('orbitfs_users').select('*', { count: 'exact', head: true }).eq('role', 'owner').eq('status', 'active');
 			if ((count ?? 0) <= 1) return json({ error: 'At least one active owner is required' }, { status: 400 });
 		}

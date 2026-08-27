@@ -10,9 +10,12 @@ export type OrbitUser = {
 	username: string;
 	display_name: string;
 	email: string | null;
-	role: 'owner' | 'admin' | 'member' | 'viewer';
-	status: 'active' | 'disabled';
+	role: 'owner' | 'admin' | 'user';
+	status: 'active' | 'inactive' | 'banned';
 	avatar_url: string | null;
+	permissions?: Record<string, boolean>;
+	must_change_pin?: boolean;
+	ban_reason?: string | null;
 };
 
 export function hashPassword(password: string) {
@@ -72,7 +75,7 @@ export async function getSessionUser(cookies: Cookies): Promise<OrbitUser | null
 	}
 	const { data: user } = await supabase
 		.from('orbitfs_users')
-		.select('id,username,display_name,email,role,status,avatar_url')
+		.select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason,last_login_at,login_count')
 		.eq('id', session.user_id)
 		.maybeSingle();
 	if (!user || user.status !== 'active') return null;
