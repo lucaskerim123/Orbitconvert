@@ -21,7 +21,7 @@
 		}
 	}
 
-	function toggleStatus(id: string, current: 'active' | 'offline') {
+	function toggleStatus(id: string, current: 'active' | 'offline' | 'archived') {
 		baseStore.updateWorkspace(id, { status: current === 'active' ? 'offline' : 'active' });
 	}
 </script>

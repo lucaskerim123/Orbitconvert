@@ -99,7 +99,7 @@ export async function POST({ request, cookies, url, getClientAddress }) {
 				{ onConflict: 'workspace_id,user_id' }
 			);
 			if (membershipError) throw membershipError;
-			await ensureCoreFolders(supabase, adoptedPublicWorkspaceId, user.id);
+			await ensureCoreFolders(supabase, adoptedPublicWorkspaceId!, user.id);
 		}
 
 		const baseSlug = slugify(username) || 'user';

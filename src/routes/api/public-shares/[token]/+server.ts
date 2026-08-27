@@ -14,7 +14,7 @@ function escapeHtml(value: unknown) {
 
 async function fileResponse(entry: any) {
 	const bytes = await readEntryBytes(entry);
-	return new Response(bytes, {
+	return new Response(Uint8Array.from(bytes).buffer, {
 		headers: {
 			'content-type': entry.mime_type || 'application/octet-stream',
 			'content-disposition': `attachment; filename="${String(entry.name || 'download').replace(/[\r\n"]/g, '')}"`,

@@ -117,6 +117,10 @@ export const api = {
 		xhr.onerror = () => reject(new ApiError('ZIP extract failed', 0));
 		xhr.send(file);
 	}),
+	previewStreamUrl: async (path: string) => {
+		const blob = await api.previewBlob(path);
+		return URL.createObjectURL(blob);
+	},
 	previewBlob: async (path: string) => {
 		const res = await fetch(apiUrl(`/preview?path=${encodeURIComponent(path)}`), { headers: contextHeaders(), credentials: 'same-origin' });
 		if (!res.ok) throw new ApiError('Preview failed', res.status);

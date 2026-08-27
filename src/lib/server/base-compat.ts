@@ -145,11 +145,11 @@ export async function permissionsForPath(user: OrbitUser, workspaceId: string, p
 	return {
 		read: row.can_view === true,
 		write: row.can_edit === true,
-		download: row.can_view === true,
-		move: row.can_edit === true,
+		download: row.can_download === true,
+		move: row.can_move === true,
 		delete: row.can_delete === true,
 		create: row.can_create === true,
-		share: row.can_view === true,
+		share: row.can_share === true,
 		manage: row.can_manage_permissions === true
 	};
 }

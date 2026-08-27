@@ -89,7 +89,7 @@ async function zipResponse(workspaceId: string, requestedPaths: string[], filena
 		}
 	}
 	const payload = await zip.generateAsync({ type: 'uint8array', compression: 'DEFLATE', compressionOptions: { level: 6 } });
-	return new Response(payload, {
+	return new Response(Uint8Array.from(payload).buffer, {
 		headers: {
 			'content-type': 'application/zip',
 			'content-disposition': `attachment; filename="${filename.replace(/[\r\n"]/g, '')}"`,
@@ -100,7 +100,7 @@ async function zipResponse(workspaceId: string, requestedPaths: string[], filena
 
 async function fileResponse(entry: any, inline = false) {
 	const bytes = await readEntryBytes(entry);
-	return new Response(bytes, {
+	return new Response(Uint8Array.from(bytes).buffer, {
 		headers: {
 			'content-type': entry.mime_type || 'application/octet-stream',
 			'content-disposition': `${inline ? 'inline' : 'attachment'}; filename="${String(entry.name || 'download').replace(/[\r\n"]/g, '')}"`,
