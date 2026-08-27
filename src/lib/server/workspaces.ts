@@ -24,16 +24,8 @@ export const DEFAULT_WORKSPACE_SETTINGS = {
 const OWNER_MANAGEMENT = Object.fromEntries(MANAGEMENT_ACTIONS.map((key) => [key,true]));
 const MANAGEMENT_DEFAULTS: Record<string,Record<string,boolean>> = {
 	editor: {
-		view_settings:true, edit_settings:false, manage_members:false, manage_permissions:false,
-		view_protected_folders:false, manage_protected_folders:false, mcp_use:true,
-		manage_mcp_startup:false, manage_mcp_preset_names:false, manage_mcp_projects:true,
-		manage_mcp_settings:false, ventmode_use:true, ventmode_configure:false, ventmode_read:true,
-		ventmode_load:true, ventmode_create:true, ventmode_draft:true, ventmode_upload:true,
-		ventmode_discard:true, ventmode_read_others:false, ventmode_manage_others:false,
-		send_messages:true, sorter_view:true, sorter_scan:true, sorter_add_to_queue:true,
-		sorter_review_queue:true, sorter_manage_rules:false, sorter_apply:false, sorter_undo:false,
-		sorter_auto_apply:false, converter_view:true, converter_run:true,
-		converter_manage_settings:false, delete_workspace:false
+		...OWNER_MANAGEMENT,
+		delete_workspace:false
 	},
 	contributor: {
 		view_settings:false, edit_settings:false, manage_members:false, manage_permissions:false,
