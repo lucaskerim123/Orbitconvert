@@ -1,0 +1,102 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { KeyRound, LoaderCircle, RefreshCw, ShieldCheck, ExternalLink } from '@lucide/svelte';
+
+	let summary = $state<any>(null);
+	let licenseKey = $state('');
+	let loading = $state(true);
+	let refreshing = $state(false);
+	let activating = $state(false);
+	let error = $state('');
+	let message = $state('');
+
+	async function load(refresh = false) {
+		if (refresh) refreshing = true;
+		else loading = true;
+		error = '';
+		try {
+			const response = await fetch(`/api/license/status${refresh ? '?refresh=1' : ''}`, { cache: 'no-store' });
+			const payload = await response.json();
+			if (!response.ok) throw new Error(payload.refreshError || payload.error || 'Could not load licence status');
+			summary = payload;
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Could not load licence status';
+		} finally {
+			loading = false;
+			refreshing = false;
+		}
+	}
+
+	onMount(() => { void load(); });
+
+	async function activate(event: SubmitEvent) {
+		event.preventDefault();
+		error = '';
+		message = '';
+		activating = true;
+		try {
+			const response = await fetch('/api/license/activate', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ licenseKey })
+			});
+			const payload = await response.json();
+			if (!response.ok) throw new Error(payload.error || 'Licence activation failed');
+			summary = payload.license;
+			licenseKey = '';
+			message = 'Base System licence activated.';
+			const setup = await fetch('/api/setup/status', { cache: 'no-store' }).then((r) => r.json()).catch(() => null);
+			window.location.assign(setup?.needsSetup ? '/register?setup=1' : '/login');
+		} catch (err) {
+			error = err instanceof Error ? err.message : 'Licence activation failed';
+		} finally {
+			activating = false;
+		}
+	}
+</script>
+
+<svelte:head><title>Licence · OrbitFS</title></svelte:head>
+
+<div class="relative flex min-h-dvh items-center justify-center overflow-hidden bg-background px-4 py-8 text-foreground">
+	<div class="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(220,38,38,0.16),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(59,130,246,0.12),transparent_32%)]"></div>
+	<section class="relative w-full max-w-2xl rounded-3xl border bg-card/90 p-6 shadow-2xl backdrop-blur sm:p-8">
+		<div class="flex flex-wrap items-start justify-between gap-4">
+			<div>
+				<div class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary"><ShieldCheck class="size-3.5" /> Licence required</div>
+				<h1 class="mt-4 text-2xl font-semibold tracking-tight">OrbitFS Base System</h1>
+				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">This deployment only runs when the existing Incendiary Networks licence service validates the <code>orbitfs_panel</code> entitlement for this installation.</p>
+			</div>
+			<button class="inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50" onclick={() => load(true)} disabled={refreshing}>
+				<RefreshCw class={`size-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
+			</button>
+		</div>
+
+		{#if loading}
+			<div class="mt-8 flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"><LoaderCircle class="size-4 animate-spin" /> Checking licence…</div>
+		{:else}
+			<div class="mt-6 grid gap-3 sm:grid-cols-2">
+				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Status</p><p class="mt-1 font-medium">{summary?.licensed ? 'Licensed' : 'Blocked'}</p></div>
+				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Component</p><p class="mt-1 font-medium">orbitfs_panel</p></div>
+				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Installation</p><p class="mt-1 break-all font-mono text-xs">{summary?.installationId || 'pending'}</p></div>
+				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Key</p><p class="mt-1 font-mono text-sm">{summary?.keyHint || 'not activated'}</p></div>
+			</div>
+
+			{#if summary?.reason && !summary?.licensed}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{summary.reason}{#if summary.refreshError}<span class="block mt-1 text-xs opacity-80">{summary.refreshError}</span>{/if}</div>{/if}
+			{#if error}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}
+			{#if message}<div class="mt-4 rounded-lg border px-4 py-3 text-sm">{message}</div>{/if}
+
+			<form class="mt-6 space-y-3" onsubmit={activate}>
+				<label class="block text-sm font-medium" for="license-key">Licence key</label>
+				<div class="flex flex-col gap-2 sm:flex-row">
+					<div class="relative flex-1"><KeyRound class="absolute left-3 top-3 size-4 text-muted-foreground" /><input id="license-key" class="h-10 w-full rounded-md border border-input bg-background pl-9 pr-3 font-mono text-sm" bind:value={licenseKey} autocomplete="off" placeholder="Enter existing licence key" required /></div>
+					<button class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-medium text-primary-foreground disabled:opacity-50" type="submit" disabled={activating || !licenseKey.trim()}>{#if activating}<LoaderCircle class="size-4 animate-spin" />{/if} Activate</button>
+				</div>
+			</form>
+
+			<div class="mt-6 border-t pt-5 text-sm text-muted-foreground">
+				<p>Licences are issued and managed by the existing external licensing system. This OrbitFS deployment does not create licences.</p>
+				<a class="mt-2 inline-flex items-center gap-1 font-medium text-primary hover:underline" href="https://licenseadmin.incendiarynetworks.cc/" target="_blank" rel="noreferrer">Open licence administration <ExternalLink class="size-3.5" /></a>
+			</div>
+		{/if}
+	</section>
+</div>
