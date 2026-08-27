@@ -7,7 +7,6 @@ import { writeAudit } from '$lib/server/audit';
 
 export async function POST({ request, cookies, url, getClientAddress }) {
 	try {
-		await assertPanelLicensed();
 		const body = await request.json().catch(() => ({}));
 		const username = String(body.username ?? '').trim();
 		const pin = String(body.pin ?? '');

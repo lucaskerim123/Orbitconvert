@@ -50,6 +50,7 @@ export type PanelLicenseSummary = {
 	offlineGrace: boolean;
 	refreshError: string | null;
 	component: Record<string, any>;
+	components: Record<string, any>;
 	plan: string | null;
 	licensedTo: string | null;
 	expiresAt: string | null;
@@ -133,6 +134,7 @@ function summaryFromPayload(payload: EntitlementPayload, row: LicenseRow | null,
 		offlineGrace: false,
 		refreshError: null,
 		component,
+		components: payload.components && typeof payload.components === 'object' ? payload.components : { [PANEL_COMPONENT]: component },
 		plan: String(payload.plan || payload.tier || row?.plan || '') || null,
 		licensedTo: String(payload.licensedTo || payload.customerName || payload.sub || row?.licensed_to || '') || null,
 		expiresAt: payload.exp ? new Date(payload.exp * 1000).toISOString() : row?.expires_at || null,
@@ -154,6 +156,7 @@ function unlicensedSummary(installationId: string, row: LicenseRow | null, reaso
 		offlineGrace: false,
 		refreshError,
 		component: { state: 'blocked', allowed: false, lockedToThisInstallation: false, reason },
+		components: { [PANEL_COMPONENT]: { state: 'blocked', allowed: false, lockedToThisInstallation: false, reason } },
 		plan: row?.plan || null,
 		licensedTo: row?.licensed_to || null,
 		expiresAt: row?.expires_at || null
