@@ -388,16 +388,13 @@
 			return;
 		}
 		const id = selectedId;
-		const [memberData, overrideData, managementData, messageData] = await Promise.all([
-			api.get<{ members: Member[] }>(`/workspaces/${id}/members`),
-			api.get<{ overrides: FileOverride[] }>(`/workspaces/${id}/permission-overrides`),
-			api.get<ManagementResponse>(`/workspaces/${id}/management-permissions`),
-			api.get<{ messages: WorkspaceMessage[] }>(`/workspaces/${id}/messages`)
-		]);
-		members = memberData.members;
-		overrides = overrideData.overrides;
-		management = managementData;
-		messages = messageData.messages;
+		const detailData = await api.get<{
+			members: Member[]; overrides: FileOverride[]; management: ManagementResponse; messages: WorkspaceMessage[];
+		}>(`/workspaces/${id}/details`);
+		members = detailData.members;
+		overrides = detailData.overrides;
+		management = detailData.management;
+		messages = detailData.messages;
 		try {
 			const profileData = await api.get<any>(`/profiles/${id}/catalog`);
 			profileRoleOverrides = profileData.roleOverrides ?? {};

@@ -258,7 +258,7 @@
 	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
 	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
 	const isFilesRoute = $derived(page.url.pathname === '/');
-	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces')));
+	const showWorkspaceSelector = $derived(workspace.enabled && isFilesRoute);
 
 	// Search is Files-scoped, but the box lives in the shared header - reset it whenever
 	// the user navigates away so it doesn't silently keep filtering a page it can't affect.

@@ -202,16 +202,60 @@ export async function presentWorkspace(user: OrbitUser, workspace: any, role?: s
 
 export async function visibleWorkspaces(user: OrbitUser) {
 	const supabase = getSupabaseAdmin();
-	const result = await supabase.from('orbitfs_workspaces').select('*')
-		.neq('status','archived').order('is_main',{ascending:false}).order('name');
-	if (result.error) throw result.error;
+	const [workspaceResult,memberResult,fileResult,profileResult,settingResult,permissions] = await Promise.all([
+		supabase.from('orbitfs_workspaces').select('*').neq('status','archived').order('is_main',{ascending:false}).order('name'),
+		supabase.from('orbitfs_workspace_members').select('workspace_id,role').eq('user_id',user.id),
+		supabase.from('orbitfs_files').select('workspace_id,path,kind,size_bytes').is('deleted_at',null),
+		supabase.from('orbitfs_profile_state').select('workspace_id,state'),
+		supabase.from('orbitfs_settings').select('scope_id,value').eq('scope_type','workspace').eq('key','management_permissions'),
+		effectiveUserPermissions(user)
+	]);
+	for (const result of [workspaceResult,memberResult,fileResult,profileResult,settingResult]) if (result.error) throw result.error;
+	const workspaces = workspaceResult.data ?? [];
+	const ownerIds = [...new Set(workspaces.map((ws:any) => ws.owner_id || ws.created_by).filter(Boolean))];
+	const ownerResult = ownerIds.length ? await supabase.from('orbitfs_users').select('id,username').in('id',ownerIds) : { data:[],error:null } as any;
+	if (ownerResult.error) throw ownerResult.error;
+	const ownerNames = new Map((ownerResult.data ?? []).map((row:any) => [row.id,row.username]));
+	const memberRoles = new Map((memberResult.data ?? []).map((row:any) => [row.workspace_id,row.role]));
+	const profileStates = new Map((profileResult.data ?? []).map((row:any) => [row.workspace_id,row.state]));
+	const managementOverrides = new Map((settingResult.data ?? []).map((row:any) => [row.scope_id,row.value || {}]));
+	const stats = new Map<string,any>();
+	for (const row of fileResult.data ?? []) {
+		const current = stats.get(row.workspace_id) ?? {quota:0,trash:0,media:0,system:0,files:0,folders:0};
+		if (row.kind === 'folder') current.folders += 1;
+		else {
+			const size=Number(row.size_bytes||0), root=String(row.path||'').split('/')[0]; current.files+=1;
+			if(root==='_trash')current.trash+=size; else if(root==='_media')current.media+=size;
+			else if(root==='_sorter'||root==='_archive')current.system+=size; else current.quota+=size;
+		}
+		stats.set(row.workspace_id,current);
+	}
+	const globalSettings = await readWorkspaceSettings();
 	const visible:any[] = [];
-	for (const workspace of result.data ?? []) {
-		const role = await workspaceRole(user,workspace);
-		if (role) visible.push(await presentWorkspace(user,workspace,role));
+	for (const workspace of workspaces) {
+		let role:string|null = isSystemAdmin(user) ? 'owner' :
+			(workspace.owner_id===user.id || workspace.created_by===user.id ? 'owner' : String(memberRoles.get(workspace.id) || '') || null);
+		if (!role && workspace.visibility==='public' && permissions.access_public_workspace) role='viewer';
+		if (!role) continue;
+		const usage=stats.get(workspace.id) ?? {quota:0,trash:0,media:0,system:0,files:0,folders:0};
+		const profileState=profileStates.get(workspace.id); const profileBytes=profileState ? Buffer.byteLength(JSON.stringify(profileState),'utf8') : 0;
+		const overrides:any = managementOverrides.get(workspace.id) || {};
+		const management = isSystemAdmin(user) || role==='owner' ? { ...OWNER_MANAGEMENT } :
+			Object.fromEntries(MANAGEMENT_ACTIONS.map((key)=>[key,Boolean(overrides?.[role]?.[key] ?? MANAGEMENT_DEFAULTS[role]?.[key])]));
+		if (workspace.apex_system_enabled===false || globalSettings.apexAccessMode==='admins_only' || (globalSettings.apexAccessMode==='workspace_owners' && role!=='owner'))
+			for (const key of MANAGEMENT_ACTIONS.filter((item)=>item.startsWith('sorter_')||item.startsWith('converter_'))) management[key]=false;
+		if (role!=='owner') { management.ventmode_configure=false; management.ventmode_read_others=false; management.ventmode_manage_others=false; }
+		const ownerId=workspace.owner_id || workspace.created_by || null;
+		visible.push({ ...workspace,owner_id:ownerId,owner_username:ownerNames.get(ownerId)||'System',permission:role,
+			is_public:workspace.visibility==='public',auto_delete_immune:Boolean(workspace.auto_delete_immune||workspace.delete_protected),
+			drive_state:workspace.status==='active'?'online':'offline',storage_used_bytes:usage.quota,quota_used_bytes:usage.quota,
+			trash_used_bytes:usage.trash,media_used_bytes:usage.media,system_used_bytes:usage.system+profileBytes,
+			profile_storage_used_bytes:profileBytes,total_physical_used_bytes:usage.quota+usage.trash+usage.media+usage.system+profileBytes,
+			file_count:usage.files,folder_count:usage.folders,filesystem_root:`supabase://${workspace.id}`,management_permissions:management });
 	}
 	return visible;
 }
+
 export async function workspaceMembers(workspaceId: string) {
 	const supabase = getSupabaseAdmin();
 	const result = await supabase.from('orbitfs_workspace_members')
