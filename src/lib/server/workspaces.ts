@@ -329,6 +329,13 @@ export async function createWorkspace(user: OrbitUser, input: Record<string,any>
 		if ((count.count ?? 0) >= Number(settings.maxWorkspacesPerUser))
 			throw Object.assign(new Error('Workspace limit reached'), { status:409 });
 	}
+	let owner = user;
+	if (input.ownerUsername && isSystemAdmin(user)) {
+		const requestedOwner = await supabase.from('orbitfs_users').select('*').ilike('username',String(input.ownerUsername).trim()).maybeSingle();
+		if (requestedOwner.error) throw requestedOwner.error;
+		if (!requestedOwner.data) throw Object.assign(new Error('Workspace owner user not found'), { status:404 });
+		owner = requestedOwner.data as OrbitUser;
+	}
 	const name = String(input.name ?? '').trim().slice(0,80);
 	if (name.length < 2) throw Object.assign(new Error('Workspace name must be at least 2 characters'), { status:400 });
 	let slug = cleanWorkspaceSlug(name);
@@ -337,12 +344,12 @@ export async function createWorkspace(user: OrbitUser, input: Record<string,any>
 	if ((existing.data ?? []).length) slug = `${slug}-${Date.now().toString(36)}`;
 	const created = await supabase.from('orbitfs_workspaces').insert({
 		name,slug,description:String(input.description ?? '').slice(0,500),status:'active',visibility:'private',
-		owner_id:user.id,created_by:user.id,storage_quota_bytes:5*1024**3,trash_limit_bytes:200*1024**2,
+		owner_id:owner.id,created_by:user.id,storage_quota_bytes:5*1024**3,trash_limit_bytes:200*1024**2,
 		mcp_ui_enabled:false,mcp_system_enabled:true,apex_system_enabled:true
 	}).select('*').single();
 	if (created.error || !created.data) throw created.error ?? new Error('Workspace creation failed');
-	const member = await supabase.from('orbitfs_workspace_members').insert({ workspace_id:created.data.id,user_id:user.id,role:'owner',mcp_enabled:false });
+	const member = await supabase.from('orbitfs_workspace_members').insert({ workspace_id:created.data.id,user_id:owner.id,role:'owner',mcp_enabled:false });
 	if (member.error) throw member.error;
-	await ensureCoreFolders(created.data.id,user.id);
-	return presentWorkspace(user,created.data,'owner');
+	await ensureCoreFolders(created.data.id,owner.id);
+	return presentWorkspace(user,created.data,owner.id === user.id || isSystemAdmin(user) ? 'owner' : null);
 }

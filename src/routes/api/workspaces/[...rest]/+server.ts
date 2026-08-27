@@ -106,6 +106,7 @@ export async function PATCH({ params, request, cookies }: any) {
 			if (workspace.mcp_system_enabled === false && body.mcpEnabled) throw Object.assign(new Error('MCP access is blocked for this workspace'), { status:403 });
 			patch.mcp_ui_enabled = Boolean(body.mcpEnabled);
 		}
+		const previousStatus = String(workspace.status || 'active');
 		if (body.status !== undefined) {
 			const status = String(body.status);
 			if (!['active','offline','suspended','archived'].includes(status)) throw Object.assign(new Error('Invalid workspace status'), { status:400 });
@@ -116,7 +117,17 @@ export async function PATCH({ params, request, cookies }: any) {
 			if (status === 'suspended' && !clean(body.suspensionReason ?? workspace.suspension_reason)) throw Object.assign(new Error('A suspension reason is required'), { status:400 });
 			if ((workspace.is_main || workspace.delete_protected || workspace.auto_delete_immune) && status === 'archived') throw Object.assign(new Error('This workspace is protected from archive/delete'), { status:409 });
 			patch.status = status;
+			patch.drive_state = status === 'active' ? 'online' : 'offline';
 			if (status !== 'active') patch.mcp_ui_enabled = false;
+			if (status === 'suspended' && previousStatus !== 'suspended') {
+				const members = await workspaceMembers(workspace.id);
+				const recipients = [...new Set([workspace.owner_id,...members.map((member:any) => member.user_id)].filter(Boolean))];
+				if (recipients.length) {
+					const rows = recipients.map((userId:any) => ({ user_id:userId,title:`${workspace.name} suspended`,body:String(body.suspensionReason ?? workspace.suspension_reason ?? 'Workspace suspended'),level:'warning' }));
+					const notices = await supabase.from('orbitfs_notifications').insert(rows);
+					if (notices.error) throw notices.error;
+				}
+			}
 		}
 		patch.updated_at = now();
 		const result = await supabase.from('orbitfs_workspaces').update(patch).eq('id',workspace.id).select('*').single();
