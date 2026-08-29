@@ -38,7 +38,8 @@ export async function presentAddon(row: any) {
 	const attached = installed && row.attached === true && licensed;
 	const manifest = row.manifest || {};
 	const base = String(row.deployment_url || '').replace(/\/$/,'');
-	const link = (href: string) => base && href?.startsWith('/') ? base + href : href;
+	const externalRuntime = String(row.manifest?.runtimeMode || row.runtime?.mode || '').includes('external-vercel');
+	const link = (href: string) => externalRuntime ? href : (base && href?.startsWith('/') ? base + href : href);
 	const frontend = manifest.frontend ? { ...manifest.frontend, navigationGroups:(manifest.frontend.navigationGroups||[]).map((group:any)=>({...group,items:(group.items||[]).map((item:any)=>({...item,href:link(item.href)}))})), adminGroups:(manifest.frontend.adminGroups||[]).map((group:any)=>({...group,items:(group.items||[]).map((item:any)=>({...item,href:link(item.href)}))})), primaryNavigation:(manifest.frontend.primaryNavigation||[]).map((item:any)=>({...item,href:link(item.href)})), routes:[] } : null;
 	return {
 		id:row.id,name:row.name,description:row.description,version:row.version,
