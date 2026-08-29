@@ -12,6 +12,7 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 function bypassLicense(pathname: string, method: string) {
+	if (pathname === '/mcp') return true;
 	if (method === 'OPTIONS') return true;
 	if (PUBLIC_PATHS.has(pathname)) return true;
 	if (pathname.startsWith('/_app/') || pathname.startsWith('/favicon') || pathname.startsWith('/robots')) return true;
