@@ -8,6 +8,13 @@ export const USER_CAPABILITIES = [
 	'sorter_manage_rules','sorter_auto_apply','converter_view','converter_run','converter_manage_settings'
 ] as const;
 
+export const USER_CAPABILITY_LABELS: Record<string,string> = {
+	create_workspaces:'Create workspaces', access_public_workspace:'Access public workspace', invite_workspace_members:'Invite workspace members', share_files:'Share files',
+	mcp_use:'Use MCP', mcp_manage_startup:'Manage MCP startup', mcp_manage_preset_names:'Rename MCP startup presets', mcp_manage_projects:'Manage MCP projects', mcp_manage_settings:'Manage MCP settings',
+	sorter_view:'View Sorter', sorter_scan:'Run Sorter scan', sorter_add_to_queue:'Add to Sorter queue', sorter_review_queue:'Review Sorter queue', sorter_apply:'Apply Sorter changes', sorter_undo:'Undo Sorter changes', sorter_manage_rules:'Manage Sorter rules', sorter_auto_apply:'Allow Sorter auto-apply',
+	converter_view:'View Converter', converter_run:'Run Converter', converter_manage_settings:'Manage Converter settings'
+};
+
 export const REGISTRATION_MODES = ['off','open','approval_queue'] as const;
 export type RegistrationMode = typeof REGISTRATION_MODES[number];
 

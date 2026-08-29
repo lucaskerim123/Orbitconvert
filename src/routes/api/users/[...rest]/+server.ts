@@ -3,7 +3,7 @@ import { hashPassword, requireAdmin } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { writeAudit } from '$lib/server/audit';
-import { USER_CAPABILITIES, REGISTERED_USER_PERMISSION_DEFAULTS, normalizeUserPermissions } from '$lib/server/registration';
+import { USER_CAPABILITIES, USER_CAPABILITY_LABELS, REGISTERED_USER_PERMISSION_DEFAULTS, normalizeUserPermissions } from '$lib/server/registration';
 
 function failure(error: any) {
 	return json({ error:error?.message ?? 'User request failed' }, { status:Number(error?.status || 500) });
@@ -62,7 +62,7 @@ export async function GET({ params, cookies }) {
 				loginCount:Number(row.login_count || 0)
 			};
 		});
-		return json({ users:result, capabilities:[...USER_CAPABILITIES], permissionDefaults:REGISTERED_USER_PERMISSION_DEFAULTS });
+		return json({ users:result, capabilities:[...USER_CAPABILITIES], capabilityLabels:USER_CAPABILITY_LABELS, capabilityGroups:[], permissionDefaults:REGISTERED_USER_PERMISSION_DEFAULTS });
 	} catch (error) { return failure(error); }
 }
 export async function POST({ params, request, cookies }) {

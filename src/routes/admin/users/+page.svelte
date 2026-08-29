@@ -21,12 +21,9 @@
 		pendingRequests: RegistrationRequest[];
 	};
 
-	const permissionLabels: Record<string, string> = {
-		create_workspaces:'Create workspaces', access_public_workspace:'Access public workspace', invite_workspace_members:'Invite workspace members', share_files:'Share files',
-		mcp_use:'Use MCP', mcp_manage_startup:'Manage MCP startup', mcp_manage_preset_names:'Rename MCP startup presets', mcp_manage_projects:'Manage MCP projects', mcp_manage_settings:'Manage MCP settings',
-		sorter_view:'View Sorter', sorter_scan:'Run Sorter scan', sorter_add_to_queue:'Add to Sorter queue', sorter_review_queue:'Review Sorter queue', sorter_apply:'Apply Sorter changes', sorter_undo:'Undo Sorter changes', sorter_manage_rules:'Manage Sorter rules', sorter_auto_apply:'Allow Sorter auto-apply',
-		converter_view:'View Converter', converter_run:'Run Converter', converter_manage_settings:'Manage Converter settings'
-	};
+	let permissionLabels = $state<Record<string, string>>({
+		create_workspaces:'Create workspaces', access_public_workspace:'Access public workspace', invite_workspace_members:'Invite workspace members', share_files:'Share files'
+	});
 
 	let users = $state<PanelUser[]>([]);
 	let capabilities = $state<string[]>([]);
@@ -65,7 +62,7 @@
 		registrationSaved = '';
 		try {
 			const [result, registration] = await Promise.all([
-				api.get<{ users: PanelUser[]; capabilities: string[]; permissionDefaults: UserPermissions }>('/users'),
+				api.get<{ users: PanelUser[]; capabilities: string[]; capabilityLabels?: Record<string,string>; permissionDefaults: UserPermissions }>('/users'),
 				api.get<RegistrationSettings>('/registration/settings')
 			]);
 			users = result.users;

@@ -31,13 +31,13 @@
 	const editableRoles = ['editor', 'contributor', 'viewer'];
 	let fileActions = $state<string[]>(['read','write','download','move','delete','create','share']);
 	let managementActions = $state<string[]>([
-		'view_settings','edit_settings','manage_members','manage_permissions','view_protected_folders','manage_protected_folders',
+		'view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders',
 		'mcp_use','manage_mcp_startup','manage_mcp_preset_names','manage_mcp_projects','manage_mcp_settings','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages',
 		'sorter_view','sorter_scan','sorter_add_to_queue','sorter_review_queue','sorter_manage_rules','sorter_apply','sorter_undo','sorter_auto_apply',
 		'converter_view','converter_run','converter_manage_settings','delete_workspace'
 	]);
 	const managementLabels: Record<string, string> = {
-		view_settings:'View workspace settings', edit_settings:'Edit workspace settings', manage_members:'Manage members', manage_permissions:'Manage permissions',
+		view_settings:'View workspace settings', edit_settings:'Edit workspace settings', manage_members:'Manage members', manage_permissions:'Manage permissions', manage_library:'Manage Library',
 		view_protected_folders:'View protected folders', manage_protected_folders:'Manage protected folders', mcp_use:'Use MCP', manage_mcp_startup:'Manage MCP startup',
 		manage_mcp_preset_names:'Rename MCP startup presets', manage_mcp_projects:'Manage MCP projects', manage_mcp_settings:'Manage MCP settings', ventmode_use:'Use Vent Mode', ventmode_configure:'Configure Vent Mode', ventmode_read:'View Vent Mode vents', ventmode_load:'Load Vent Mode vents', ventmode_create:'Create Vent Mode vents', ventmode_draft:'Save Vent Mode drafts', ventmode_upload:'Upload/finalise Vent Mode vents', ventmode_discard:'Discard Vent Mode working vents', ventmode_read_others:'View other users Vent Mode vents', ventmode_manage_others:'Manage other users Vent Mode vents', send_messages:'Send workspace messages',
 		sorter_view:'View Sorter', sorter_scan:'Run Sorter scan', sorter_add_to_queue:'Add to Sorter queue', sorter_review_queue:'Review Sorter queue', sorter_manage_rules:'Manage Sorter rules', sorter_apply:'Apply Sorter changes', sorter_undo:'Undo Sorter changes', sorter_auto_apply:'Allow Sorter auto-apply',
