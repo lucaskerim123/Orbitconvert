@@ -182,6 +182,7 @@ export async function GET({ params, request, cookies, url }) {
 					share: permissions.share
 				},
 				canManagePermissions: permissions.manage,
+				canManageLibrary: user.role === 'owner' || user.role === 'admin' || ['owner','editor'].includes(String(workspace.permission || '')),
 				workspace
 			});
 		}

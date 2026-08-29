@@ -33,7 +33,8 @@
 		Search,
 		FolderOpen,
 		ArrowLeft,
-		Check
+		Check,
+		LibraryBig
 	} from '@lucide/svelte';
 
 	type Entry = {
@@ -141,6 +142,8 @@
 	let bulkBusy = $state(false);
 	let trashPurgeBusy = $state(false);
 	let canManagePermissions = $state(false);
+	let canManageLibrary = $state(false);
+	let libraryMessage = $state('');
 	let permissionTarget = $state<{ path: string; kind: 'file' | 'folder' } | null>(null);
 	const currentWorkspace = $derived(workspace.current);
 	const hasWorkspaceChoices = $derived(workspace.workspaces.length > 0);
@@ -203,9 +206,11 @@
 				entries: Entry[];
 				folderPermissions: FolderPermissions;
 				canManagePermissions: boolean;
+				canManageLibrary: boolean;
 			}>(`/files?subpath=${encodeURIComponent(currentPath)}`);
 			folderPermissions = res.folderPermissions;
 			canManagePermissions = Boolean(res.canManagePermissions);
+			canManageLibrary = Boolean(res.canManageLibrary);
 			entries = [...res.entries].sort((a, b) =>
 				a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1
 			);
@@ -474,6 +479,21 @@
 		} finally {
 			busyPath = null;
 		}
+	}
+
+	async function registerInLibrary(entry: Entry, fullPath: string) {
+		const workspaceId = String(workspace.currentId || fileContext.currentId || '');
+		if (!workspaceId || !canManageLibrary) return;
+		busyPath = fullPath;
+		libraryMessage = '';
+		try {
+			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(workspaceId)}/items`, {
+				provider: 'base.files', sourceKind: entry.type === 'dir' ? 'folder' : 'file', path: fullPath, name: entry.name
+			});
+			libraryMessage = result.existing ? `${entry.name} is already registered in Library.` : `${entry.name} registered in Library.`;
+		} catch (err) {
+			error = err instanceof ApiError ? err.message : 'Could not register in Library';
+		} finally { busyPath = null; }
 	}
 
 	async function runUpload(job: UploadJob) {
@@ -963,6 +983,12 @@
 			<button onclick={() => (error = '')} aria-label="Dismiss"><X class="size-4" /></button>
 		</div>
 	{/if}
+	{#if libraryMessage}
+		<div class="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+			{libraryMessage}
+			<button onclick={() => (libraryMessage = '')} aria-label="Dismiss"><X class="size-4" /></button>
+		</div>
+	{/if}
 
 	<div class="overflow-x-auto rounded-md border border-border bg-card">
 		{#if loading}
@@ -1100,6 +1126,17 @@
 								<div
 									class="flex justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
 								>
+									{#if !entry.protected && canManageLibrary}
+										<button
+											class="flex size-7 items-center justify-center rounded-md text-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-300"
+											aria-label="Add {entry.name} to Library"
+											title="Add to Library"
+											disabled={busyPath === fullPath}
+											onclick={() => registerInLibrary(entry, fullPath)}
+										>
+											<LibraryBig class="size-4" />
+										</button>
+									{/if}
 									{#if !entry.protected && canManagePermissions}
 										<button
 											class="flex size-7 items-center justify-center rounded-md text-violet-400 hover:bg-violet-500/15 hover:text-violet-300"
