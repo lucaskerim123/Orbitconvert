@@ -15,8 +15,11 @@ export const MANAGEMENT_ACTIONS = [
 	'converter_view','converter_run','converter_manage_settings','delete_workspace'
 ] as const;
 
+export const BASE_MANAGEMENT_ACTIONS = ['view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages','delete_workspace'] as const;
+export const MANAGEMENT_LABELS: Record<string,string> = { view_settings:'View workspace settings',edit_settings:'Edit workspace settings',manage_members:'Manage members',manage_permissions:'Manage permissions',manage_library:'Manage Library / Knowledge',view_protected_folders:'View protected folders',manage_protected_folders:'Manage protected folders',ventmode_use:'Use Vent Mode',ventmode_configure:'Configure Vent Mode',ventmode_read:'View Vent Mode vents',ventmode_load:'Load Vent Mode vents',ventmode_create:'Create Vent Mode vents',ventmode_draft:'Save Vent Mode drafts',ventmode_upload:'Upload/finalise Vent Mode vents',ventmode_discard:'Discard Vent Mode working vents',ventmode_read_others:'View other users Vent Mode vents',ventmode_manage_others:'Manage other users Vent Mode vents',send_messages:'Send workspace messages',delete_workspace:'Delete workspace' };
+
 export const DEFAULT_WORKSPACE_SETTINGS = {
-	publicWorkspaceVisible:true, apexAccessMode:'workspace_owners', maxWorkspacesPerUser:2,
+	publicWorkspaceVisible:false, apexAccessMode:'workspace_owners', maxWorkspacesPerUser:2,
 	inactiveBeforeOfflineDays:30, offlineWarningDays:7, deleteAfterOfflineDays:30,
 	deletionWarningDays:7, defaultMaxProfiles:20, defaultMaxProfileSizeMB:50,
 	defaultMaxTotalProfileStorageMB:0
@@ -176,7 +179,7 @@ export async function workspaceStats(workspaceId: string) {
 export async function presentWorkspace(user: OrbitUser, workspace: any, role?: string | null) {
 	const supabase = getSupabaseAdmin();
 	const resolved = role ?? await workspaceRole(user,workspace) ?? 'viewer';
-	const ownerId = workspace.owner_id || workspace.created_by || null;
+	const ownerId = workspace.visibility === 'public' ? null : (workspace.owner_id || workspace.created_by || null);
 	let ownerUsername = 'System';	if (ownerId) {
 		const owner = await supabase.from('orbitfs_users').select('username').eq('id',ownerId).maybeSingle();
 		if (owner.error) throw owner.error;
@@ -245,7 +248,7 @@ export async function visibleWorkspaces(user: OrbitUser) {
 		if (workspace.apex_system_enabled===false || globalSettings.apexAccessMode==='admins_only' || (globalSettings.apexAccessMode==='workspace_owners' && role!=='owner'))
 			for (const key of MANAGEMENT_ACTIONS.filter((item)=>item.startsWith('sorter_')||item.startsWith('converter_'))) management[key]=false;
 		if (role!=='owner') { management.ventmode_configure=false; management.ventmode_read_others=false; management.ventmode_manage_others=false; }
-		const ownerId=workspace.owner_id || workspace.created_by || null;
+		const ownerId=workspace.visibility==='public' ? null : (workspace.owner_id || workspace.created_by || null);
 		visible.push({ ...workspace,owner_id:ownerId,owner_username:ownerNames.get(ownerId)||'System',permission:role,
 			is_public:workspace.visibility==='public',auto_delete_immune:Boolean(workspace.auto_delete_immune||workspace.delete_protected),
 			drive_state:workspace.status==='active'?'online':'offline',storage_used_bytes:usage.quota,quota_used_bytes:usage.quota,

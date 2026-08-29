@@ -3,16 +3,16 @@ import crypto from 'node:crypto';
 import { getSupabaseAdmin } from './supabase';
 
 export const PROFILE_PERMISSIONS = Object.freeze([
-  'view','create','edit','edit_assigned','mcp_edit','approve_edits','delete','import','export',
+  'view','create','edit','edit_assigned','queue_profile_commands','approve_profile_commands','delete','import','export','repair',
   'manage_fields','manage_templates','manage_permissions','manage_startup',
   'load_context','view_restricted','edit_restricted'
 ]);
 
 export const PROFILE_ROLE_DEFAULTS = Object.freeze({
   owner: Object.freeze(Object.fromEntries(PROFILE_PERMISSIONS.map((key) => [key, true]))),
-  editor: Object.freeze({ view:true, create:true, edit:true, edit_assigned:true, mcp_edit:true, approve_edits:true, delete:true, import:true, export:true, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
-  contributor: Object.freeze({ view:true, create:true, edit:false, edit_assigned:true, mcp_edit:false, approve_edits:false, delete:false, import:true, export:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
-  viewer: Object.freeze({ view:true, create:false, edit:false, edit_assigned:false, mcp_edit:false, approve_edits:false, delete:false, import:false, export:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:false, view_restricted:false, edit_restricted:false })
+  editor: Object.freeze({ view:true, create:true, edit:true, edit_assigned:true, queue_profile_commands:true, approve_profile_commands:true, delete:true, import:true, export:true, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
+  contributor: Object.freeze({ view:true, create:true, edit:false, edit_assigned:true, queue_profile_commands:true, approve_profile_commands:false, delete:false, import:true, export:false, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
+  viewer: Object.freeze({ view:true, create:false, edit:false, edit_assigned:false, queue_profile_commands:false, approve_profile_commands:false, delete:false, import:false, export:false, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:false, view_restricted:false, edit_restricted:false })
 });
 
 const now = () => new Date().toISOString();
@@ -680,7 +680,7 @@ function normaliseRelationshipList(value) {
 }
 
 function canApproveProfileEdit(permissions, role) {
-  return role === 'owner' || permissions.approve_edits === true;
+  return role === 'owner' || permissions.approve_profile_commands === true;
 }
 
 export async function createProfileEditRequest(workspaceRoot, input, actor, role, userId, systemRole = 'user') {

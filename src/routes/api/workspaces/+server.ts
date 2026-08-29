@@ -3,7 +3,7 @@ import { requireUser } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { writeAudit } from '$lib/server/audit';
 import {
-	FILE_ACTIONS, MANAGEMENT_ACTIONS, createWorkspace, effectiveUserPermissions,
+	FILE_ACTIONS, BASE_MANAGEMENT_ACTIONS, MANAGEMENT_LABELS, createWorkspace, effectiveUserPermissions,
 	isSystemAdmin, readWorkspaceSettings, visibleWorkspaces
 } from '$lib/server/workspaces';
 
@@ -20,7 +20,7 @@ export async function GET({ cookies }) {
 		return json({
 			workspaces, settings:await readWorkspaceSettings(), canManageGlobal:isSystemAdmin(user),
 			userPermissions:await effectiveUserPermissions(user), roles:['owner','editor','contributor','viewer'],
-			fileActions:[...FILE_ACTIONS], managementActions:[...MANAGEMENT_ACTIONS],
+			fileActions:[...FILE_ACTIONS], managementActions:[...BASE_MANAGEMENT_ACTIONS], managementLabels:MANAGEMENT_LABELS,
 			ownedCount:workspaces.filter((ws:any) => ws.permission === 'owner' && !ws.is_main).length
 		});
 	} catch (error) { return fail(error); }

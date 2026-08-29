@@ -30,29 +30,20 @@
 	const roles = ['owner', 'editor', 'contributor', 'viewer'];
 	const editableRoles = ['editor', 'contributor', 'viewer'];
 	let fileActions = $state<string[]>(['read','write','download','move','delete','create','share']);
-	let managementActions = $state<string[]>([
-		'view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders',
-		'mcp_use','manage_mcp_startup','manage_mcp_preset_names','manage_mcp_projects','manage_mcp_settings','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages',
-		'sorter_view','sorter_scan','sorter_add_to_queue','sorter_review_queue','sorter_manage_rules','sorter_apply','sorter_undo','sorter_auto_apply',
-		'converter_view','converter_run','converter_manage_settings','delete_workspace'
-	]);
-	const managementLabels: Record<string, string> = {
-		view_settings:'View workspace settings', edit_settings:'Edit workspace settings', manage_members:'Manage members', manage_permissions:'Manage permissions', manage_library:'Manage Library',
-		view_protected_folders:'View protected folders', manage_protected_folders:'Manage protected folders', mcp_use:'Use MCP', manage_mcp_startup:'Manage MCP startup',
-		manage_mcp_preset_names:'Rename MCP startup presets', manage_mcp_projects:'Manage MCP projects', manage_mcp_settings:'Manage MCP settings', ventmode_use:'Use Vent Mode', ventmode_configure:'Configure Vent Mode', ventmode_read:'View Vent Mode vents', ventmode_load:'Load Vent Mode vents', ventmode_create:'Create Vent Mode vents', ventmode_draft:'Save Vent Mode drafts', ventmode_upload:'Upload/finalise Vent Mode vents', ventmode_discard:'Discard Vent Mode working vents', ventmode_read_others:'View other users Vent Mode vents', ventmode_manage_others:'Manage other users Vent Mode vents', send_messages:'Send workspace messages',
-		sorter_view:'View Sorter', sorter_scan:'Run Sorter scan', sorter_add_to_queue:'Add to Sorter queue', sorter_review_queue:'Review Sorter queue', sorter_manage_rules:'Manage Sorter rules', sorter_apply:'Apply Sorter changes', sorter_undo:'Undo Sorter changes', sorter_auto_apply:'Allow Sorter auto-apply',
-		converter_view:'View Converter', converter_run:'Run Converter', converter_manage_settings:'Manage Converter settings', delete_workspace:'Delete workspace'
-	};
+	let managementActions = $state<string[]>(['view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages','delete_workspace']);
+	const coreManagementLabels: Record<string,string> = { view_settings:'View workspace settings',edit_settings:'Edit workspace settings',manage_members:'Manage members',manage_permissions:'Manage permissions',manage_library:'Manage Library / Knowledge',view_protected_folders:'View protected folders',manage_protected_folders:'Manage protected folders',ventmode_use:'Use Vent Mode',ventmode_configure:'Configure Vent Mode',ventmode_read:'View Vent Mode vents',ventmode_load:'Load Vent Mode vents',ventmode_create:'Create Vent Mode vents',ventmode_draft:'Save Vent Mode drafts',ventmode_upload:'Upload/finalise Vent Mode vents',ventmode_discard:'Discard Vent Mode working vents',ventmode_read_others:'View other users Vent Mode vents',ventmode_manage_others:'Manage other users Vent Mode vents',send_messages:'Send workspace messages',delete_workspace:'Delete workspace' };
+	let managementLabels = $state<Record<string,string>>({...coreManagementLabels});
 	const profileActions = [
 		'view',
 		'create',
 		'edit',
 		'edit_assigned',
-		'mcp_edit',
-		'approve_edits',
+		'queue_profile_commands',
+		'approve_profile_commands',
 		'delete',
 		'import',
 		'export',
+		'repair',
 		'manage_fields',
 		'manage_templates',
 		'manage_startup',
@@ -66,11 +57,12 @@
 		create: 'Create profiles',
 		edit: 'Edit profiles in panel',
 		edit_assigned: 'Edit assigned profiles only',
-		mcp_edit: 'Edit profiles through ChatGPT / MCP',
-		approve_edits: 'Approve ChatGPT / MCP profile edits',
+		queue_profile_commands: 'Queue profile commands for approval',
+		approve_profile_commands: 'Approve queued profile commands',
 		delete: 'Delete profiles',
 		import: 'Import profiles',
 		export: 'Export profiles',
+		repair: 'Repair / migrate profiles',
 		manage_fields: 'Manage profile fields',
 		manage_templates: 'Manage profile templates',
 		manage_startup: 'Manage profile loading rules',
@@ -426,7 +418,7 @@
 				settings: GlobalSettings;
 				canManageGlobal: boolean;
 				userPermissions: typeof userPermissions;
-				fileActions?: string[]; managementActions?: string[];
+				fileActions?: string[]; managementActions?: string[]; managementLabels?: Record<string,string>;
 			}>('/workspaces');
 			workspaces = data.workspaces;
 			globalSettings = { ...globalSettings, ...data.settings };
@@ -434,6 +426,7 @@
 			userPermissions = data.userPermissions;
 			if (data.fileActions?.length) fileActions = data.fileActions;
 			if (data.managementActions?.length) managementActions = data.managementActions;
+			managementLabels = { ...coreManagementLabels, ...(data.managementLabels || {}) };
 			invitations = data.canManageGlobal
 				? (await api.get<{ invitations: WorkspaceInvitation[] }>('/workspace-invitations'))
 						.invitations
@@ -776,7 +769,7 @@
 			<main class="min-w-0 space-y-4">
 				{#if canManageGlobal && showManagerPanel}
 					<Card class="border-primary/30"><CardHeader><div class="flex items-start justify-between gap-3"><div><CardTitle>System Administration</CardTitle><CardDescription>Global Workspaces settings and approval queues. These settings are not part of the selected workspace.</CardDescription></div><Button size="sm" variant="ghost" onclick={() => (showManagerPanel = false)}>Close</Button></div></CardHeader><CardContent class="space-y-4">
-						<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div></div>
+						<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Hiding removes it from normal non-admin workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div></div>
 						<div class="flex flex-wrap gap-2"><Button onclick={saveGlobal} disabled={busy === 'global'}>Save global Workspaces settings</Button><Badge variant="outline">{pendingInvitations.length} member approvals</Badge><Badge variant="outline">{pendingStorageRequests.length} quota approvals</Badge><Badge variant="outline">{pendingOwnershipRequests.length} ownership approvals</Badge></div>
 						<div class="grid gap-3 xl:grid-cols-3"><div class="rounded-lg border p-3"><p class="font-medium">Member approvals</p>{#each pendingInvitations as invitation (invitation.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{invitation.username} → {invitation.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondInvitation(invitation.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondInvitation(invitation.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingInvitations.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Quota approvals</p>{#each pendingStorageRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondQuota(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondQuota(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingStorageRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Ownership approvals</p>{#each pendingOwnershipRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}: {request.from_username} → {request.target_username}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondTransfer(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondTransfer(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingOwnershipRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div></div>
 					</CardContent></Card>
@@ -808,7 +801,7 @@
 					{#if tab === 'overview'}
 						<div class="grid gap-4 lg:grid-cols-3">
 							<Card class="lg:col-span-2"><CardHeader><CardTitle>Workspace overview</CardTitle><CardDescription>Current state and key workspace information.</CardDescription></CardHeader><CardContent class="grid gap-3 sm:grid-cols-2">
-								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Owner</p><p class="mt-1 font-medium">{selected.owner_username || 'System'}</p></div>
+								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Owner</p><p class="mt-1 font-medium">{selected.is_public ? 'No owner' : (selected.owner_username || 'Unassigned')}</p></div>
 								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Status</p><p class="mt-1 font-medium capitalize">{selected.status}</p></div>
 								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Files / folders</p><p class="mt-1 font-medium">{selected.file_count ?? 0} / {selected.folder_count ?? 0}</p></div>
 								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Profile storage</p><p class="mt-1 font-medium">{formatBytes(selected.profile_storage_used_bytes ?? 0)}</p><p class="text-xs text-muted-foreground">Excluded from normal quota</p></div>
@@ -953,7 +946,7 @@
 						<div class="space-y-4">
 							<Card><CardHeader><CardTitle>System workspace defaults</CardTitle><CardDescription>Global limits and lifecycle rules for the built-in Workspaces system.</CardDescription></CardHeader><CardContent class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 								<label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Offline warning (days)</span><Input type="number" min="0" bind:value={globalSettings.offlineWarningDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label>
-								<label class="space-y-1 text-sm"><span>Deletion warning (days)</span><Input type="number" min="0" bind:value={globalSettings.deletionWarningDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><label class="space-y-1 text-sm"><span>Default profile size (MB)</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfileSizeMB} /></label><label class="space-y-1 text-sm"><span>Total profile allowance (MB)</span><Input type="number" min="0" bind:value={globalSettings.defaultMaxTotalProfileStorageMB} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div>
+								<label class="space-y-1 text-sm"><span>Deletion warning (days)</span><Input type="number" min="0" bind:value={globalSettings.deletionWarningDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><label class="space-y-1 text-sm"><span>Default profile size (MB)</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfileSizeMB} /></label><label class="space-y-1 text-sm"><span>Total profile allowance (MB)</span><Input type="number" min="0" bind:value={globalSettings.defaultMaxTotalProfileStorageMB} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Hiding removes it from normal non-admin workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div>
 								<div class="md:col-span-2 xl:col-span-4"><Button onclick={saveGlobal} disabled={busy === 'global'}>Save global defaults</Button></div>
 							</CardContent></Card>
 
