@@ -1,19 +1,16 @@
 import { type Handle } from '@sveltejs/kit';
 import { assertMcpLicensed } from '$lib/server/mcp-cloud';
 
-const BACKEND_PATHS = [
-	'/mcp',
-	'/api/mcp/',
-	'/api/setup/status'
-];
-
 function isBackendPath(pathname: string) {
-	return BACKEND_PATHS.some((path) => pathname === path || pathname.startsWith(path));
+	if (pathname === '/mcp') return true;
+	if (pathname === '/api/setup/status') return true;
+	if (pathname === '/api/mcp' || pathname.startsWith('/api/mcp/')) return true;
+	return false;
 }
 
 export const handle: Handle = async ({ event, resolve }) => {
 	const { pathname } = event.url;
-	if (event.request.method === 'OPTIONS') return resolve(event);
+	if (event.request.method === 'OPTIONS' && isBackendPath(pathname)) return resolve(event);
 
 	if (!isBackendPath(pathname)) {
 		return new Response('Not found', {
