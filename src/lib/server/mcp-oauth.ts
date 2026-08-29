@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 
-export const MCP_RESOURCE = 'https://orbitfsmcp.vercel.app';
+export const MCP_RESOURCE = 'https://orbitfsmcp.vercel.app/mcp';
 export const OAUTH_ISSUER = 'https://orbitfsproject.vercel.app';
 export const OAUTH_SCOPES = ['orbitfs:read', 'orbitfs:write'] as const;
 const ACCESS_TTL_MS = 60 * 60 * 1000;
@@ -68,6 +68,7 @@ async function storeTokens(clientId: string, userId: string, scope: string, reso
 		user_id: userId, scope, resource, expires_at: expiresAt, refresh_expires_at: refreshExpiresAt
 	});
 	if (error) throw error;
+	await db.from('mcp_clients').update({user_id:userId,last_seen_at:new Date().toISOString()}).eq('id',clientId);
 	return { access_token: accessToken, token_type: 'Bearer', expires_in: Math.floor(ACCESS_TTL_MS / 1000), refresh_token: refreshToken, scope };
 }
 

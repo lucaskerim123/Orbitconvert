@@ -18,7 +18,10 @@ export async function POST({ request }) {
 	const clientId = `orbitfs_${randomBytes(18).toString('base64url')}`;
 	const record = { client_id:clientId, client_name:String(body.client_name || 'ChatGPT MCP Client').slice(0,120), redirect_uris:redirects,
 		token_endpoint_auth_method:'none', grant_types:['authorization_code','refresh_token'], response_types:['code'] };
-	const { error } = await getSupabaseAdmin().from('mcp_oauth_clients').insert(record);
+	const db=getSupabaseAdmin();
+	const { error } = await db.from('mcp_oauth_clients').insert(record);
 	if (error) throw error;
+	await db.from('mcp_clients').upsert({ id:clientId, client_name:record.client_name, status:'active',
+		metadata:{oauth:true,dynamicRegistration:true,source:'chatgpt-compatible'}, redirect_uris:redirects },{onConflict:'id'});
 	return json({ ...record, scope:normalizeScope(String(body.scope || 'orbitfs:read orbitfs:write')) }, { status:201, headers:{'cache-control':'no-store'} });
 }
