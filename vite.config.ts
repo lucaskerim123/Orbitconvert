@@ -10,7 +10,10 @@ export default defineConfig({
 			compilerOptions: {
 				runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
-			adapter: adapter()
+			adapter: adapter(),
+			csrf: {
+				trustedOrigins: ['https://chatgpt.com', 'https://chat.openai.com', 'https://connectors.api.openai.org']
+			}
 		})
 	]
 });
