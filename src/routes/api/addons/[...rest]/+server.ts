@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { requireUser } from '$lib/server/auth';
-import { assertPanelLicensed } from '$lib/server/license';
+import { activateLicenseComponent, assertPanelLicensed } from '$lib/server/license';
 import { isSystemAdmin } from '$lib/server/workspaces';
 import { addonLicensed, getCloudAddon, presentAddon, saveCloudAddon } from '$lib/server/cloud-addons';
 import { writeAudit } from '$lib/server/audit';
@@ -39,13 +39,15 @@ export async function POST({ params,cookies,url }: any) {
 	try {
 		const user=await context(cookies); const parts=clean(params.rest).split('/').filter(Boolean); const row=await getCloudAddon(parts[0]); const action=parts[1] || '';
 		if (action==='install') {
-			const embedded = row.manifest?.runtimeMode === 'embedded-vercel' || row.id === 'mcp';
-			const addon=await saveCloudAddon(row.id,{ installed:true,attached:false,status:'detached',installed_at:row.installed_at || new Date().toISOString(),deployment_url:embedded ? url.origin : row.deployment_url,configured:embedded ? true : row.configured,runtime:embedded ? {...(row.runtime||{}),mode:'embedded-vercel'} : row.runtime });
+			const embedded = row.manifest?.runtimeMode === 'embedded-vercel';
+			const deploymentUrl = embedded ? url.origin : row.deployment_url;
+			const addon=await saveCloudAddon(row.id,{ installed:true,attached:false,status:'detached',installed_at:row.installed_at || new Date().toISOString(),deployment_url:deploymentUrl,configured:Boolean(deploymentUrl),runtime:{...(row.runtime||{}),mode:embedded?'embedded-vercel':'external-vercel'} });
 			await writeAudit({actorUserId:user.id,action:'addon.install',targetType:'addon',targetId:row.id}); return json({ok:true,addon});
 		}
 		if (action==='attach') {
 			if (!row.installed) throw Object.assign(new Error('Install the add-on first'),{status:409});
 			if (!row.configured || !row.deployment_url) throw Object.assign(new Error('Configure the cloud deployment URL first'),{status:409});
+			if (!(await addonLicensed(row.license_component)) && row.license_component) await activateLicenseComponent(row.license_component);
 			if (!(await addonLicensed(row.license_component))) throw Object.assign(new Error('This installation is not licensed for this add-on'),{status:403,code:'LICENSE_REQUIRED'});
 			const addon=await saveCloudAddon(row.id,{attached:true,status:'attached'}); await writeAudit({actorUserId:user.id,action:'addon.attach',targetType:'addon',targetId:row.id}); return json({ok:true,addon});
 		}
@@ -54,10 +56,10 @@ export async function POST({ params,cookies,url }: any) {
 		}
 		if (action==='test') {
 			if (!row.deployment_url) throw Object.assign(new Error('Cloud deployment URL is not configured'),{status:409});
-			const embedded = row.manifest?.runtimeMode === 'embedded-vercel' || row.id === 'mcp';
+			const embedded = row.manifest?.runtimeMode === 'embedded-vercel';
 			const base=String(row.deployment_url).replace(/\/$/,''); let online=embedded; let status=embedded ? 200 : 0;
 			if (!embedded) {
-				try { const response=await fetch(base,{method:'GET',signal:AbortSignal.timeout(5000)}); status=response.status; online=response.status<500; } catch { online=false; }
+				try { const response=await fetch(`${base}/api/setup/status`,{method:'GET',signal:AbortSignal.timeout(5000)}); status=response.status; online=response.status<500; } catch { online=false; }
 			}
 			await saveCloudAddon(row.id,{runtime:{...(row.runtime||{}),online,lastTestedAt:new Date().toISOString(),httpStatus:status,mode:embedded?'embedded-vercel':row.runtime?.mode},status:online?(row.attached?'attached':'detached'):'error'});
 			if (!online) throw Object.assign(new Error('Cloud add-on deployment is not reachable'),{status:503});
