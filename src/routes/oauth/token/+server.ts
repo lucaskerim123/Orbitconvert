@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { exchangeAuthorizationCode, exchangeRefreshToken, getOAuthClient } from '$lib/server/mcp-oauth';
+import { exchangeAuthorizationCode, exchangeRefreshToken, getOAuthClient, MCP_RESOURCE } from '$lib/server/mcp-oauth';
 
 const oauthError = (error:string, description:string, status=400) => json({ error, error_description:description }, { status, headers:{'cache-control':'no-store','pragma':'no-cache'} });
 
@@ -7,7 +7,7 @@ export async function POST({ request }) {
 	const form = await request.formData();
 	const grantType = String(form.get('grant_type') || '');
 	const clientId = String(form.get('client_id') || '');
-	const resource = String(form.get('resource') || '');
+	const resource = String(form.get('resource') || MCP_RESOURCE);
 	if (!clientId) return oauthError('invalid_client','client_id is required');
 	try { await getOAuthClient(clientId); } catch { return oauthError('invalid_client','Unknown OAuth client',401); }
 	try {
