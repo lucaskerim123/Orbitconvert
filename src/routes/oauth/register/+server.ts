@@ -43,7 +43,7 @@ export async function POST({ request }) {
 	const clientId = `orbitfs_${randomBytes(18).toString('base64url')}`;
 	const registrationAccessToken = randomToken(32);
 	const registrationClientUri = `${OAUTH_ISSUER}/oauth/register/${encodeURIComponent(clientId)}`;
-	const scope = normalizeScope(String(body.scope || 'orbitfs:read orbitfs:write'));
+	const scope = normalizeScope(String(body.scope || 'orbitfs:read orbitfs:write offline_access'));
 	const contacts = Array.isArray(body.contacts) ? body.contacts.map(String).slice(0, 20) : [];
 	const record = {
 		client_id: clientId,

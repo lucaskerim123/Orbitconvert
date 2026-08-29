@@ -3,7 +3,7 @@ import { getSupabaseAdmin } from '$lib/server/supabase';
 
 export const MCP_RESOURCE = 'https://orbitfsmcp.vercel.app/mcp';
 export const OAUTH_ISSUER = 'https://orbitfsproject.vercel.app';
-export const OAUTH_SCOPES = ['orbitfs:read', 'orbitfs:write'] as const;
+export const OAUTH_SCOPES = ['orbitfs:read', 'orbitfs:write', 'offline_access'] as const;
 const ACCESS_TTL_MS = 60 * 60 * 1000;
 const REFRESH_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 const CODE_TTL_MS = 10 * 60 * 1000;
