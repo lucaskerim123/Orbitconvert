@@ -1,7 +1,7 @@
 import { json, error } from '@sveltejs/kit';
 import { requireAdmin, requireUser } from '$lib/server/auth';
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { assertMcpLicensed, auditMcp, getMcpAddonRow } from '$lib/server/mcp-cloud';
+import { assertMcpLicensed, auditMcp, getMcpAddonRow, getMcpRuntimeState, assertMcpRunning } from '$lib/server/mcp-cloud';
 import {
 	deleteContextBundle, deleteMcpProject, getContextBundle, getPresetBundles,
 	getPresetMetadata, getPresets, getStartup, listContextBundles, listMcpProjects,
@@ -30,9 +30,9 @@ async function saveSetting(scopeType:string,scopeId:string|null,key:string,value
 
 async function runtimePayload(){
 	const db=getSupabaseAdmin(); const addon=await getMcpAddonRow();
-	const runtime=await db.from('mcp_runtime_state').select('*').eq('id',1).maybeSingle();
+	const runtime={ data: await getMcpRuntimeState() };
 	let licensed=false;try{await assertMcpLicensed();licensed=true;}catch{}
-	return {online:addon?.attached===true&&addon?.status!=='uninstalled',mode:runtime.data?.mode||'workspace',
+	return {online:addon?.attached===true&&addon?.status!=='uninstalled'&&runtime.data?.service_status==='online',serviceStatus:runtime.data?.service_status||'online',lastChangedAt:runtime.data?.updated_at||null,mode:runtime.data?.mode||'workspace',
 		workspaceIntegration:runtime.data?.workspace_addon_active!==false,connectorPath:'/mcp',licensed,
 		attached:addon?.attached===true,publicBaseUrl:addon?.deployment_url||null,compute:'vercel',database:'supabase'};
 }
@@ -55,7 +55,8 @@ async function registryPayload(){
 export async function GET({cookies,params,url}){
 	const user=await requireUser(cookies);await assertMcpLicensed();
 	const parts=String(params.rest||'').split('/').filter(Boolean),db=getSupabaseAdmin();
-	if(parts[0]==='runtime')return ok(await runtimePayload());
+	if(parts[0]==='runtime'||parts[0]==='master-control')return ok(await runtimePayload());
+	await assertMcpRunning();
 	if(parts[0]==='logs'){
 		if(!['owner','admin'].includes(user.role))throw error(403,'Administrator access required');
 		const limit=Math.min(500,Math.max(1,Number(url.searchParams.get('limit')||250)));
@@ -85,7 +86,7 @@ export async function GET({cookies,params,url}){
 	throw error(404,'MCP route not found');
 }
 export async function PUT({cookies,params,request,url}){
-	const user=await requireUser(cookies);await assertMcpLicensed();
+	const user=await requireUser(cookies);await assertMcpLicensed();await assertMcpRunning();
 	const parts=String(params.rest||'').split('/').filter(Boolean),body=await request.json().catch(()=>({}));
 	if(parts[0]==='admin-policy'){
 		await requireAdmin(cookies);const policy=body.policy||body;await saveSetting('global',null,'mcp.admin_policy',policy);
@@ -119,7 +120,7 @@ export async function PUT({cookies,params,request,url}){
 	throw error(404,'MCP route not found');
 }
 export async function PATCH({cookies,params,request}){
-	const user=await requireAdmin(cookies);await assertMcpLicensed();
+	const user=await requireAdmin(cookies);await assertMcpLicensed();await assertMcpRunning();
 	const parts=String(params.rest||'').split('/').filter(Boolean);
 	if(parts[0]!=='registry'||parts[1]!=='clients'||!parts[2])throw error(404,'MCP route not found');
 	const body=await request.json().catch(()=>({})),patch:Record<string,unknown>={};
@@ -131,6 +132,22 @@ export async function PATCH({cookies,params,request}){
 export async function POST({cookies,params,request}){
 	const user=await requireUser(cookies);await assertMcpLicensed();
 	const parts=String(params.rest||'').split('/').filter(Boolean),db=getSupabaseAdmin();
+	if(parts[0]==='master-control'){
+		await requireAdmin(cookies);
+		const body=await request.json().catch(()=>({}));
+		const action=String(body.action||'').toLowerCase();
+		if(!['start','stop','restart'].includes(action))throw error(400,'Invalid MCP control action');
+		if(action==='restart'){
+			await db.from('mcp_runtime_state').update({service_status:'restarting',updated_at:now()}).eq('id',1);
+			await auditMcp('runtime.restarting',{},user.id);
+		}
+		const service_status=action==='stop'?'stopped':'online';
+		const r=await db.from('mcp_runtime_state').update({service_status,updated_at:now()}).eq('id',1).select('*').single();
+		if(r.error)throw r.error;
+		await auditMcp(`runtime.${action}`,{service_status},user.id);
+		return ok({ok:true,action,serviceStatus:service_status,runtime:r.data});
+	}
+	await assertMcpRunning();
 	if(parts[0]==='workspaces'&&parts[1]){
 		const ws=parts[1],body=await request.json().catch(()=>({}));
 		if(parts[2]==='projects'&&!parts[3]){await requireMcpWorkspace(user,ws,'manage_mcp_projects');const project=await saveMcpProject(ws,user,body);await auditMcp('project.created',{projectId:project?.id},user.id,ws);return ok({project});}
@@ -149,7 +166,7 @@ export async function POST({cookies,params,request}){
 }
 
 export async function DELETE({cookies,params}){
-	const user=await requireUser(cookies);await assertMcpLicensed();
+	const user=await requireUser(cookies);await assertMcpLicensed();await assertMcpRunning();
 	const parts=String(params.rest||'').split('/').filter(Boolean);
 	if(parts[0]==='workspaces'&&parts[1]){
 		const ws=parts[1];
