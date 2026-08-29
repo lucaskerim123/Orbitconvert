@@ -1,14 +1,12 @@
 import { redirect, type Handle } from '@sveltejs/kit';
-import { getPanelLicenseSummary } from '$lib/server/license';
+import { assertMcpLicensed } from '$lib/server/mcp-cloud';
 
 const PUBLIC_PATHS = new Set([
-	'/license',
 	'/login',
 	'/api/auth/login',
 	'/api/auth/logout',
 	'/api/auth/me',
-	'/api/license/status',
-	'/api/license/activate'
+	'/api/setup/status'
 ]);
 
 function bypassLicense(pathname: string, method: string) {
@@ -23,31 +21,21 @@ export const handle: Handle = async ({ event, resolve }) => {
 	const { pathname } = event.url;
 	if (bypassLicense(pathname, event.request.method)) return resolve(event);
 
-	let summary;
 	try {
-		summary = await getPanelLicenseSummary();
-	} catch (error) {
-		summary = {
-			licensed: false,
-			reason: 'license_check_failed',
-			refreshError: error instanceof Error ? error.message : 'License check failed'
-		};
-	}
-
-	if (!summary.licensed) {
+		await assertMcpLicensed();
+	} catch (cause: any) {
+		const message = cause instanceof Error ? cause.message : 'OrbitFS MCP licence is required';
 		if (pathname.startsWith('/api/')) {
 			return new Response(JSON.stringify({
-				error: 'OrbitFS Base System licence is required',
-				code: 'LICENSE_REQUIRED',
-				license: summary,
+				error: message,
+				code: cause?.code || 'MCP_LICENSE_REQUIRED',
 				restricted: true
 			}), {
-				status: 403,
+				status: Number(cause?.status || 403),
 				headers: { 'content-type': 'application/json' }
 			});
 		}
-		const next = encodeURIComponent(`${pathname}${event.url.search}`);
-		throw redirect(303, `/license?next=${next}`);
+		throw redirect(303, `/login?next=${encodeURIComponent(`${pathname}${event.url.search}`)}`);
 	}
 
 	return resolve(event);
