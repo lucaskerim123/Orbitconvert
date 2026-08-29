@@ -2,7 +2,7 @@
 	import { api, ApiError } from '$lib/api';
 	import { tick } from 'svelte';
 	import { Button } from '$lib/components/ui';
-	import { ChevronRight, File, Folder, FolderOpen, FolderSearch, LoaderCircle, X } from '@lucide/svelte';
+	import { ChevronRight, File, Folder, FolderOpen, FolderPlus, FolderSearch, LoaderCircle, X } from '@lucide/svelte';
 
 	type Entry = { name: string; type: 'dir' | 'file' };
 	type Mode = 'any' | 'folder';
@@ -26,6 +26,10 @@
 	let entries = $state<Entry[]>([]);
 	let loading = $state(false);
 	let error = $state('');
+	let canCreateFolder = $state(false);
+	let creatingFolder = $state(false);
+	let newFolderName = $state('');
+	let createBusy = $state(false);
 	let dialog = $state<HTMLElement | null>(null);
 	let returnFocus: HTMLElement | null = null;
 
@@ -65,10 +69,11 @@
 		error = '';
 		try {
 			const headers = workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined;
-			const result = await api.get<{ entries: Entry[] }>(
+			const result = await api.get<{ entries: Entry[]; folderPermissions?: { create?: boolean } }>(
 				`/files?subpath=${encodeURIComponent(path)}`,
 				headers
 			);
+			canCreateFolder = result.folderPermissions?.create === true;
 			entries = [...result.entries].sort((left, right) =>
 				left.type === right.type
 					? left.name.localeCompare(right.name)
@@ -76,9 +81,28 @@
 			);
 		} catch (err) {
 			entries = [];
+			canCreateFolder = false;
 			error = err instanceof ApiError ? err.message : 'Could not load this folder';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function createFolder() {
+		const name = newFolderName.trim();
+		if (!name || !canCreateFolder || createBusy) return;
+		createBusy = true;
+		error = '';
+		try {
+			const headers = workspaceId ? { 'X-Workspace-Id': workspaceId } : undefined;
+			await api.post('/mkdir', { path: join(path, name) }, headers);
+			newFolderName = '';
+			creatingFolder = false;
+			await load();
+		} catch (err) {
+			error = err instanceof ApiError ? err.message : 'Could not create folder';
+		} finally {
+			createBusy = false;
 		}
 	}
 
@@ -209,6 +233,21 @@
 					{/each}
 				{/if}
 			</div>
+
+			{#if canCreateFolder}
+				<div class="border-t border-border p-3">
+					{#if creatingFolder}
+						<form class="flex items-center gap-2" onsubmit={(event) => { event.preventDefault(); createFolder(); }}>
+							<FolderPlus class="size-4 shrink-0 text-muted-foreground" />
+							<input class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" bind:value={newFolderName} placeholder="Folder name" disabled={createBusy} autofocus />
+							<Button type="submit" size="sm" disabled={createBusy || !newFolderName.trim()}>{createBusy ? 'Creating…' : 'Create'}</Button>
+							<Button type="button" variant="ghost" size="sm" onclick={() => { creatingFolder = false; newFolderName = ''; }} disabled={createBusy}>Cancel</Button>
+						</form>
+					{:else}
+						<Button type="button" variant="outline" size="sm" onclick={() => (creatingFolder = true)}><FolderPlus class="size-4" />Create folder</Button>
+					{/if}
+				</div>
+			{/if}
 
 			<footer class="flex items-center justify-between gap-3 border-t border-border p-3">
 				<span class="min-w-0 truncate text-xs text-muted-foreground">/{path}</span>

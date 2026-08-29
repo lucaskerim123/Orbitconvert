@@ -67,6 +67,7 @@
 			]);
 			users = result.users;
 			capabilities = result.capabilities || [];
+			permissionLabels = { create_workspaces:'Create workspaces', access_public_workspace:'Access public workspace', invite_workspace_members:'Invite workspace members', share_files:'Share files', ...(result.capabilityLabels || {}) };
 			permissionDefaults = result.permissionDefaults || registration.defaultPermissions || {};
 			registrationMode = registration.mode;
 			registrationPermissions = { ...(registration.defaultPermissions || permissionDefaults) };
