@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { auth } from '$lib/auth.svelte';
 	import { api, ApiError } from '$lib/api';
@@ -76,6 +77,11 @@
 		return () => clearInterval(timer);
 	});
 
+	function postLoginPath() {
+		const next = page.url.searchParams.get('next') || '/';
+		return next.startsWith('/') && !next.startsWith('//') ? next : '/';
+	}
+
 	async function submit(e: Event) {
 		e.preventDefault();
 		if (!username || !pin) return;
@@ -89,7 +95,7 @@
 				return;
 			}
 			auth.set(result.token, { username: result.username, role: result.role });
-			await goto('/');
+			await goto(postLoginPath());
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Something went wrong';
 		} finally {
@@ -115,7 +121,7 @@
 				{ token: forcedToken, pin: newPin }
 			);
 			auth.set(result.token, { username: result.username, role: result.role });
-			await goto('/');
+			await goto(postLoginPath());
 		} catch (err) {
 			error = err instanceof ApiError ? err.message : 'Could not change PIN';
 		} finally {
