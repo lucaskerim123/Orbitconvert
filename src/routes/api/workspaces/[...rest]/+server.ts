@@ -33,13 +33,14 @@ export async function GET({ params, cookies }: any) {
 			return json({ workspace:await presentWorkspace(user,workspace) });
 		if (parts[1] === 'details') {
 			const role = await workspaceRole(user,workspace) ?? 'viewer';
-			const [members,overrides,management,messageResult,profile] = await Promise.all([
+			const [presented,members,overrides,management,messageResult,profile] = await Promise.all([
+				presentWorkspace(user,workspace,role),
 				workspaceMembers(workspace.id), fileRoleOverrides(workspace.id), managementPermissionResponse(workspace.id),
 				supabase.from('orbitfs_workspace_messages').select('*').eq('workspace_id',workspace.id).order('created_at',{ascending:false}).limit(100),
 				profileCatalog(workspace.id,role,user.id,user.role).catch(() => null)
 			]);
 			if (messageResult.error) throw messageResult.error;
-			return json({ members,overrides,management,messages:await messageRows(messageResult.data ?? []),profile });
+			return json({ workspace:presented,members,overrides,management,messages:await messageRows(messageResult.data ?? []),profile });
 		}
 		if (parts[1] === 'members') return json({ members:await workspaceMembers(workspace.id) });
 		if (parts[1] === 'permission-overrides') return json({ overrides:await fileRoleOverrides(workspace.id) });

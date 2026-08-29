@@ -429,18 +429,9 @@
 			if (data.fileActions?.length) fileActions = data.fileActions;
 			if (data.managementActions?.length) managementActions = data.managementActions;
 			managementLabels = { ...coreManagementLabels, ...(data.managementLabels || {}) };
-			invitations = data.canManageGlobal
-				? (await api.get<{ invitations: WorkspaceInvitation[] }>('/workspace-invitations'))
-						.invitations
-				: [];
-			[storageRequests, ownershipRequests] = await Promise.all([
-				api
-					.get<{ requests: StorageRequest[] }>('/workspace-storage-requests')
-					.then((result) => result.requests),
-				api
-					.get<{ requests: OwnershipRequest[] }>('/workspace-ownership-requests')
-					.then((result) => result.requests)
-			]);
+			invitations = [];
+			storageRequests = [];
+			ownershipRequests = [];
 			if (
 				!selectedId ||
 				!workspaces.some((item) => item.id === selectedId && canAccessWorkspace(item))
@@ -453,6 +444,21 @@
 			loading = false;
 		}
 	}
+	async function loadApprovals() {
+		if (!canManageGlobal) return;
+		try {
+			[invitations, storageRequests, ownershipRequests] = await Promise.all([
+				api.get<{ invitations: WorkspaceInvitation[] }>('/workspace-invitations').then((r) => r.invitations),
+				api.get<{ requests: StorageRequest[] }>('/workspace-storage-requests').then((r) => r.requests),
+				api.get<{ requests: OwnershipRequest[] }>('/workspace-ownership-requests').then((r) => r.requests)
+			]);
+		} catch (err) { error = messageFor(err, 'Failed to load approval queues'); }
+	}
+	async function toggleManagerPanel() {
+		showManagerPanel = !showManagerPanel;
+		if (showManagerPanel) await loadApprovals();
+	}
+
 	async function run(key: string, action: () => Promise<unknown>, reload = true) {
 		busy = key;
 		error = '';
@@ -765,7 +771,7 @@
 						{#if canManageGlobal}<Button class="w-full" size="sm" variant="ghost" onclick={() => (showAllWorkspaces = !showAllWorkspaces)}>{showAllWorkspaces ? 'Show my / main only' : 'Show all workspaces'}</Button>{/if}
 					</CardContent>
 				</Card>
-				{#if canManageGlobal}<Card><CardContent class="p-3"><button class="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-muted/50" onclick={() => (showManagerPanel = !showManagerPanel)}><span><span class="block text-sm font-medium">System administration</span><span class="block text-xs text-muted-foreground">Global defaults, approvals and lifecycle rules</span></span><Shield class="size-4 text-muted-foreground" /></button></CardContent></Card>{/if}
+				{#if canManageGlobal}<Card><CardContent class="p-3"><button class="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-muted/50" onclick={toggleManagerPanel}><span><span class="block text-sm font-medium">System administration</span><span class="block text-xs text-muted-foreground">Global defaults, approvals and lifecycle rules</span></span><Shield class="size-4 text-muted-foreground" /></button></CardContent></Card>{/if}
 			</aside>
 
 			<main class="min-w-0 space-y-4">
