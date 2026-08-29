@@ -27,11 +27,15 @@ export async function verifyMcpBearer(request:Request): Promise<AuthInfo> {
 	if (!token || token.revoked_at || token.resource!==MCP_RESOURCE || new Date(token.expires_at).getTime()<=Date.now()) {
 		throw Object.assign(new Error('Invalid or expired bearer token'),{status:401});
 	}
+	const { data:client,error:clientError }=await db.from('mcp_clients').select('id,status').eq('id',token.client_id).maybeSingle();
+	if (clientError) throw clientError;
+	if (!client || client.status!=='active') throw Object.assign(new Error('MCP client is disabled or disconnected'),{status:401});
 	const { data:user,error:userError }=await db.from('orbitfs_users')
 		.select('id,username,display_name,email,role,status,permissions').eq('id',token.user_id).maybeSingle();
 	if (userError) throw userError;
 	if (!user || user.status!=='active') throw Object.assign(new Error('OrbitFS user is unavailable'),{status:401});
 	void db.from('mcp_oauth_tokens').update({last_used_at:new Date().toISOString()}).eq('access_token_hash',token.access_token_hash);
+	void db.from('mcp_clients').update({last_seen_at:new Date().toISOString()}).eq('id',token.client_id);
 	return {
 		token:raw,
 		clientId:token.client_id,
