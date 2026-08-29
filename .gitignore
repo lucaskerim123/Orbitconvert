@@ -34,3 +34,4 @@ tmp-*.cjs
 tmp-*.js
 tmp-*.b64
 tmp-*.json
+.env*
