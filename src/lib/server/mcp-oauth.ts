@@ -68,7 +68,7 @@ async function storeTokens(clientId: string, userId: string, scope: string, reso
 		user_id: userId, scope, resource, expires_at: expiresAt, refresh_expires_at: refreshExpiresAt
 	});
 	if (error) throw error;
-	await db.from('mcp_clients').update({user_id:userId,last_seen_at:new Date().toISOString()}).eq('id',clientId);
+	await db.from('mcp_clients').update({user_id:userId,status:'active',last_seen_at:new Date().toISOString()}).eq('id',clientId);
 	return { access_token: accessToken, token_type: 'Bearer', expires_in: Math.floor(ACCESS_TTL_MS / 1000), refresh_token: refreshToken, scope };
 }
 
@@ -77,7 +77,8 @@ export async function exchangeAuthorizationCode(input: {
 }) {
 	assertResource(input.resource);
 	const db = getSupabaseAdmin();
-	const { data: row, error } = await db.from('mcp_oauth_codes').select('*').eq('code_hash', sha256(input.code)).maybeSingle();
+	const codeHash = sha256(input.code);
+	const { data: row, error } = await db.from('mcp_oauth_codes').select('*').eq('code_hash', codeHash).maybeSingle();
 	if (error) throw error;
 	if (!row || row.consumed_at || new Date(row.expires_at).getTime() <= Date.now()) throw Object.assign(new Error('Invalid or expired authorization code'), { status: 400 });
 	if (row.client_id !== input.clientId || row.redirect_uri !== input.redirectUri || row.resource !== input.resource) throw Object.assign(new Error('Authorization code binding mismatch'), { status: 400 });
@@ -85,8 +86,14 @@ export async function exchangeAuthorizationCode(input: {
 	const actual = Buffer.from(pkce(input.codeVerifier));
 	if (expected.length !== actual.length || !timingSafeEqual(expected, actual)) throw Object.assign(new Error('PKCE verification failed'), { status: 400 });
 	const consumedAt = new Date().toISOString();
-	const { error: consumeError } = await db.from('mcp_oauth_codes').update({ consumed_at: consumedAt }).eq('code_hash', row.code_hash).is('consumed_at', null);
+	const { data: consumed, error: consumeError } = await db.from('mcp_oauth_codes')
+		.update({ consumed_at: consumedAt })
+		.eq('code_hash', codeHash)
+		.is('consumed_at', null)
+		.select('code_hash')
+		.maybeSingle();
 	if (consumeError) throw consumeError;
+	if (!consumed) throw Object.assign(new Error('Authorization code has already been used'), { status: 400 });
 	return storeTokens(row.client_id, row.user_id, row.scope, row.resource);
 }
 
@@ -98,6 +105,9 @@ export async function exchangeRefreshToken(input: { refreshToken: string; client
 	if (!row || row.revoked_at || row.client_id !== input.clientId || row.resource !== input.resource || !row.refresh_expires_at || new Date(row.refresh_expires_at).getTime() <= Date.now()) {
 		throw Object.assign(new Error('Invalid or expired refresh token'), { status: 400 });
 	}
+	const { data: client, error: clientError } = await db.from('mcp_clients').select('id,status').eq('id',row.client_id).maybeSingle();
+	if (clientError) throw clientError;
+	if (!client || client.status !== 'active') throw Object.assign(new Error('MCP client is disabled or disconnected'), { status: 400 });
 	await db.from('mcp_oauth_tokens').update({ revoked_at: new Date().toISOString() }).eq('access_token_hash', row.access_token_hash);
 	return storeTokens(row.client_id, row.user_id, row.scope, row.resource);
 }
