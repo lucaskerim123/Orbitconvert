@@ -97,6 +97,7 @@
 		pct: number;
 		error?: string;
 		done?: boolean;
+		active?: boolean;
 		extractZip?: boolean;
 		targetDir: string;
 	};
@@ -497,28 +498,18 @@
 	}
 
 	async function runUpload(job: UploadJob) {
-		job.pct = 0;
-		job.error = undefined;
-		job.done = false;
+		job.pct = 0; job.error = undefined; job.done = false; job.active = true; uploads = [...uploads];
+		const updateProgress = (pct: number) => { job.pct = Math.max(0, Math.min(100, pct)); uploads = [...uploads]; };
 		try {
 			if (job.extractZip) {
-				if (!job.file.name.toLowerCase().endsWith('.zip'))
-					throw new ApiError('Only .zip files can be extracted', 415);
-				await api.uploadZipExtract(job.targetDir, job.file, (pct) => (job.pct = pct));
+				if (!job.file.name.toLowerCase().endsWith('.zip')) throw new ApiError('Only .zip files can be extracted', 415);
+				await api.uploadZipExtract(job.targetDir, job.file, updateProgress);
 			} else {
-				await api.upload(
-					`/upload?path=${encodeURIComponent(joinPath(job.targetDir, job.file.name))}`,
-					job.file,
-					(pct) => (job.pct = pct)
-				);
+				await api.uploadChunked(`/upload-chunked?path=${encodeURIComponent(joinPath(job.targetDir, job.file.name))}`, job.file, updateProgress);
 			}
-			job.pct = 100;
-			job.done = true;
-		} catch (err) {
-			job.error = err instanceof ApiError ? err.message : 'Upload failed';
-		} finally {
-			uploads = [...uploads];
-		}
+			job.pct = 100; job.done = true; await load();
+		} catch (err) { job.error = err instanceof ApiError ? err.message : 'Upload failed'; }
+		finally { job.active = false; uploads = [...uploads]; }
 	}
 
 	async function handleFiles(fileList: FileList | null) {
@@ -1126,11 +1117,11 @@
 								<div
 									class="flex justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
 								>
-									{#if !entry.protected && canManageLibrary}
+									{#if canManageLibrary}
 										<button
 											class="flex size-7 items-center justify-center rounded-md text-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-300"
-											aria-label="Add {entry.name} to Library"
-											title="Add to Library"
+											aria-label="Register {entry.name} in Library"
+											title="Register in Library"
 											disabled={busyPath === fullPath}
 											onclick={() => registerInLibrary(entry, fullPath)}
 										>

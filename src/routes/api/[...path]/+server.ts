@@ -24,7 +24,8 @@ import {
 	requireCapability,
 	selectedWorkspace,
 	writeFileBytes,
-	STORAGE_BUCKET
+	STORAGE_BUCKET,
+	storagePath
 } from '$lib/server/base-compat';
 
 const textMime = (mime: string | null | undefined) => {
@@ -320,6 +321,29 @@ export async function POST({ params, request, cookies, url }) {
 				await requireCapability(user, workspace.id, value, 'download');
 			}
 			return zipResponse(workspace.id, paths, 'selected-items.zip');
+		}
+
+		if (parts[0] === 'upload-chunked') {
+			const target = normalizePath(url.searchParams.get('path') ?? 'upload.bin');
+			await requireCapability(user, workspace.id, dirname(target), 'create');
+			const body = await request.json().catch(() => ({}));
+			const action = String(body.action || '');
+			const objectPath = storagePath(workspace.id, target);
+			if (action === 'init') {
+				const signed = await supabase.storage.from(STORAGE_BUCKET).createSignedUploadUrl(objectPath, { upsert:true });
+				if (signed.error || !signed.data) throw signed.error ?? new Error('Could not create upload URL');
+				return json({ signedUrl:signed.data.signedUrl, storagePath:objectPath });
+			}
+			if (action === 'finalize') {
+				if (String(body.storagePath || '') !== objectPath) throw Object.assign(new Error('Upload path mismatch'), { status:400 });
+				const existing = await findEntry(workspace.id, target);
+				const payload = { workspace_id:workspace.id, name:basename(target), path:target, kind:'file', mime_type:String(body.mimeType || 'application/octet-stream'), content_text:'', storage_path:objectPath, size_bytes:Math.max(0,Number(body.size)||0), created_by:existing?.created_by ?? user.id, deleted_at:null, updated_at:new Date().toISOString() };
+				const result = existing ? await supabase.from('orbitfs_files').update(payload).eq('id',existing.id).select('*').single() : await supabase.from('orbitfs_files').insert(payload).select('*').single();
+				if (result.error) throw result.error;
+				await writeAudit({ actorUserId:user.id, workspaceId:workspace.id, action:'file.upload', targetType:'file', targetId:result.data.id, detail:{path:target,size:payload.size_bytes,directStorage:true} });
+				return json({ok:true,item:result.data});
+			}
+			throw Object.assign(new Error('Unknown upload action'), { status:400 });
 		}
 
 		if (parts[0] === 'upload') {
