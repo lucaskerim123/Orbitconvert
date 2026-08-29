@@ -253,11 +253,12 @@
 		expandedGroups = { ...expandedGroups, [label]: !(expandedGroups[label] ?? active) };
 	}
 
+	const isRuntimeLanding = $derived(page.url.pathname === '/');
 	const isLoginRoute = $derived(page.url.pathname === '/login');
 	const isSetupRoute = $derived(page.url.pathname.startsWith('/setup'));
 	const isRegisterRoute = $derived(page.url.pathname.startsWith('/register'));
 	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
-	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
+	const isPublicRoute = $derived(isRuntimeLanding || isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
 	const isFilesRoute = $derived(page.url.pathname === '/');
 	const showWorkspaceSelector = $derived(workspace.enabled && isFilesRoute);
 
