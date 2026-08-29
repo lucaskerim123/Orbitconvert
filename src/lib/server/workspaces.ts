@@ -5,7 +5,7 @@ import { REGISTERED_USER_PERMISSION_DEFAULTS, USER_CAPABILITIES } from '$lib/ser
 
 export const FILE_ACTIONS = ['read','write','download','move','delete','create','share'] as const;
 export const MANAGEMENT_ACTIONS = [
-	'view_settings','edit_settings','manage_members','manage_permissions',
+	'view_settings','edit_settings','manage_members','manage_permissions','manage_library',
 	'view_protected_folders','manage_protected_folders','mcp_use','manage_mcp_startup',
 	'manage_mcp_preset_names','manage_mcp_projects','manage_mcp_settings',
 	'ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create',
@@ -28,7 +28,7 @@ const MANAGEMENT_DEFAULTS: Record<string,Record<string,boolean>> = {
 		delete_workspace:false
 	},
 	contributor: {
-		view_settings:false, edit_settings:false, manage_members:false, manage_permissions:false,
+		view_settings:false, edit_settings:false, manage_members:false, manage_permissions:false, manage_library:false,
 		view_protected_folders:false, manage_protected_folders:false, mcp_use:true,
 		manage_mcp_startup:false, manage_mcp_preset_names:false, manage_mcp_projects:false,
 		manage_mcp_settings:false, ventmode_use:true, ventmode_configure:false, ventmode_read:true,

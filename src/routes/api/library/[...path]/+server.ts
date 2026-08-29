@@ -1,0 +1,60 @@
+import { json } from '@sveltejs/kit';
+import { requireUser } from '$lib/server/auth';
+import { assertPanelLicensed } from '$lib/server/license';
+import {
+	createCollection, createEvent, createLibraryItem, createLink, deleteCollection, deleteEvent,
+	deleteLibraryItem, deleteLink, exportLibrary, importLibrary, indexLibraryItem, presentLibrary,
+	readLibrary, registerScannedFiles, retrieveLibrary, saveLibrary, saveUsage, deleteUsage, scanLibraryFiles,
+	updateCollection, updateEvent, updateLibraryItem
+} from '$lib/server/library';
+
+const clean=(v:any)=>String(v??'').trim();
+function fail(error:any){return json({error:String(error?.message||'Request failed'),code:String(error?.code||'REQUEST_FAILED')},{status:Number(error?.status||500)});}
+async function body(request:Request){return request.headers.get('content-type')?.includes('application/json') ? await request.json() : {};}
+async function ctx(cookies:any){const user=await requireUser(cookies);await assertPanelLicensed();return user;}
+function route(params:any){const p=clean(params.path).split('/').filter(Boolean);if(p[0]!=='workspaces'||!p[1])throw Object.assign(new Error('Library route not found'),{status:404});return {workspaceId:p[1],area:p[2]||'',id:p[3]||'',operation:p[4]||'',extra:p[5]||''};}
+export async function GET({params,cookies}:any){
+	try{const user=await ctx(cookies);const r=route(params);if(!r.area)return json(await presentLibrary(user,r.workspaceId));
+		if(r.area==='export')return json(await exportLibrary(r.workspaceId));
+		if(r.area==='providers')return json({providers:[{id:'base.files',name:'Files'},{id:'base.profiles',name:'Profiles'}]});
+		if(r.area==='changes'){const s=await readLibrary(r.workspaceId);return json({changes:[...(s.sourceHistory||[])].reverse(),count:(s.sourceHistory||[]).length});}
+		if(r.area==='intelligence'){const s=await readLibrary(r.workspaceId);return json({workspaceId:r.workspaceId,entities:s.entities||[],entityMentions:s.entityMentions||[],facts:s.facts||[],factRelations:s.factRelations||[],stats:{facts:(s.facts||[]).length,relations:(s.factRelations||[]).length}});}
+		if(r.area==='items'&&r.id&&r.operation==='resolve'){const s=await readLibrary(r.workspaceId);const item=s.items.find((x:any)=>x.id===r.id);if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});return json({item});}
+		if(r.area==='items'&&r.id&&r.operation==='sections'&&!r.extra){const s=await readLibrary(r.workspaceId);return json({itemId:r.id,sections:s.sections.filter((x:any)=>x.itemId===r.id),events:s.events.filter((x:any)=>x.itemId===r.id),entityMentions:(s.entityMentions||[]).filter((x:any)=>x.itemId===r.id),entities:s.entities||[],facts:(s.facts||[]).filter((x:any)=>x.itemId===r.id),factRelations:(s.factRelations||[]).filter((x:any)=>x.sourceItemId===r.id||x.targetItemId===r.id),changes:(s.sourceHistory||[]).filter((x:any)=>x.itemId===r.id).slice(-100)});}
+		if(r.area==='items'&&r.id&&r.operation==='sections'&&r.extra){const s=await readLibrary(r.workspaceId);const section=s.sections.find((x:any)=>x.itemId===r.id&&x.id===r.extra);if(!section)throw Object.assign(new Error('Knowledge section not found'),{status:404});return json({section,content:section.content||section.preview||''});}
+		if(r.area==='items'&&r.id&&r.operation==='lineage'){const s=await readLibrary(r.workspaceId);const item=s.items.find((x:any)=>x.id===r.id);return json({item,lineage:item?.lineage||{},parents:item?.lineage?.parents||[],children:s.items.filter((x:any)=>(x.lineage?.parents||[]).includes(r.id))});}
+		if(r.area==='items'&&r.id&&r.operation==='impact'){const s=await readLibrary(r.workspaceId);return json({item:s.items.find((x:any)=>x.id===r.id),collections:s.collections.filter((c:any)=>(c.entries||[]).some((e:any)=>e.itemId===r.id)),usage:s.usage.filter((u:any)=>u.itemId===r.id),linkedItems:s.links.filter((l:any)=>l.sourceItemId===r.id||l.targetItemId===r.id)});}
+		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
+export async function POST({params,request,cookies}:any){
+	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='import')return json(await importLibrary(user,r.workspaceId,input));
+		if(r.area==='scan')return json(await scanLibraryFiles(user,r.workspaceId,input));
+		if(r.area==='scan-register')return json(await registerScannedFiles(user,r.workspaceId,input));
+		if(r.area==='items'&&!r.id)return json(await createLibraryItem(user,r.workspaceId,input));
+		if(r.area==='items'&&r.id&&r.operation==='index')return json(await indexLibraryItem(user,r.workspaceId,r.id));
+		if(r.area==='retrieve')return json(await retrieveLibrary(user,r.workspaceId,input));
+		if(r.area==='collections'&&!r.id)return json(await createCollection(user,r.workspaceId,input));
+		if(r.area==='links'&&!r.id)return json(await createLink(user,r.workspaceId,input));
+		if(r.area==='events'&&!r.id)return json(await createEvent(user,r.workspaceId,input));
+		if(r.area==='usage'&&!r.id)return json(await saveUsage(user,r.workspaceId,input));
+		if(r.area==='index-all'){const s=await readLibrary(r.workspaceId);const results:any[]=[];for(const item of s.items){if(item.source?.provider==='base.files')try{results.push(await indexLibraryItem(user,r.workspaceId,item.id));}catch{}}return json({indexed:results.length,results});}
+		if(r.area==='items'&&r.id&&r.operation==='lineage'){const s=await readLibrary(r.workspaceId);const item=s.items.find((x:any)=>x.id===r.id);if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});item.lineage=input;await saveLibrary(r.workspaceId,s);return json({item,lineage:item.lineage});}
+		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
+export async function PATCH({params,request,cookies}:any){
+	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='items'&&r.id)return json(await updateLibraryItem(user,r.workspaceId,r.id,input));
+		if(r.area==='collections'&&r.id)return json(await updateCollection(user,r.workspaceId,r.id,input));
+		if(r.area==='events'&&r.id)return json(await updateEvent(user,r.workspaceId,r.id,input));
+		if(r.area==='facts'&&r.id){const s=await readLibrary(r.workspaceId);const fact=s.facts.find((x:any)=>x.id===r.id);if(!fact)throw Object.assign(new Error('Knowledge fact candidate not found'),{status:404});Object.assign(fact,input,{updatedAt:new Date().toISOString(),updatedBy:user.username});await saveLibrary(r.workspaceId,s);return json({fact});}
+		if(r.area==='fact-relations'&&r.id){const s=await readLibrary(r.workspaceId);const relation=s.factRelations.find((x:any)=>x.id===r.id);if(!relation)throw Object.assign(new Error('Knowledge fact relationship not found'),{status:404});Object.assign(relation,input,{updatedAt:new Date().toISOString(),updatedBy:user.username});await saveLibrary(r.workspaceId,s);return json({relation});}
+		if(r.area==='auto-links'&&r.id){const s=await readLibrary(r.workspaceId);const link=s.autoLinks.find((x:any)=>x.id===r.id);if(!link)throw Object.assign(new Error('Automatic knowledge link not found'),{status:404});Object.assign(link,input,{updatedAt:new Date().toISOString(),updatedBy:user.username});await saveLibrary(r.workspaceId,s);return json({link});}
+		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
+
+export async function DELETE({params,url,cookies}:any){
+	try{const user=await ctx(cookies);const r=route(params);
+		if(r.area==='items'&&r.id)return json(await deleteLibraryItem(user,r.workspaceId,r.id,url.searchParams.get('force')==='true'));
+		if(r.area==='collections'&&r.id)return json(await deleteCollection(user,r.workspaceId,r.id));
+		if(r.area==='links'&&r.id)return json(await deleteLink(user,r.workspaceId,r.id));
+		if(r.area==='events'&&r.id)return json(await deleteEvent(user,r.workspaceId,r.id));
+		if(r.area==='usage'&&r.id)return json(await deleteUsage(user,r.workspaceId,r.id));
+		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}

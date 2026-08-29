@@ -1209,17 +1209,17 @@
 		onSaved={load}
 		exportAvailable={addons.available('mcp')}
 		onAccess={canManagePermissions
-			? (path) => {
+			? (path: string) => {
 					viewerPath = null;
 					permissionTarget = { path, kind: 'file' };
 				}
 			: undefined}
 		onRename={startRenamePath}
-		onMove={(path) => {
+		onMove={(path: string) => {
 			viewerPath = null;
 			movePaths = [path];
 		}}
-		onShare={(path, name) => {
+		onShare={(path: string, name: string) => {
 			viewerPath = null;
 			sharePath = { path, name };
 		}}

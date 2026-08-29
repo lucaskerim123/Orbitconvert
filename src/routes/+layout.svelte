@@ -23,6 +23,7 @@
 		ScrollText,
 		ChevronDown,
 		ContactRound,
+		Library,
 		Users,
 		Download
 	} from '@lucide/svelte';
@@ -61,6 +62,7 @@
 	const primaryNav = $derived([
 		{ label: 'Files', href: '/', icon: Folder },
 		{ label: 'Profiles', href: '/profiles', icon: ContactRound },
+		{ label: 'Library', href: '/library', icon: Library },
 		{ label: 'Workspace Manager', href: '/workspaces', icon: Building2 },
 		...addonPrimaryNav
 	]);
