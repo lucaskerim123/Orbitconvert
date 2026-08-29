@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 
-export const MCP_RESOURCE = 'https://orbitfsmcp.vercel.app';
+export const MCP_RESOURCE = 'https://orbitfsmcp.vercel.app/mcp';
 export const OAUTH_ISSUER = 'https://orbitfsproject.vercel.app';
-export const PROTECTED_RESOURCE_METADATA = `${MCP_RESOURCE}/.well-known/oauth-protected-resource`;
+export const PROTECTED_RESOURCE_METADATA = 'https://orbitfsmcp.vercel.app/.well-known/oauth-protected-resource';
 const sha256 = (value:string) => createHash('sha256').update(value).digest('hex');
 
 export function oauthUnauthorized(description='OAuth bearer token required') {

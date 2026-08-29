@@ -3,14 +3,14 @@ import { assertMcpLicensed } from '$lib/server/mcp-cloud';
 
 function isBackendPath(pathname:string) {
 	if (pathname === '/mcp') return true;
-	if (pathname === '/.well-known/oauth-protected-resource') return true;
+	if (pathname === '/.well-known/oauth-protected-resource' || pathname === '/.well-known/oauth-protected-resource/mcp') return true;
 	if (pathname === '/api/setup/status') return true;
 	if (pathname === '/api/mcp' || pathname.startsWith('/api/mcp/')) return true;
 	return false;
 }
 
 function isPublicBackendMetadata(pathname:string) {
-	return pathname === '/api/setup/status' || pathname === '/.well-known/oauth-protected-resource';
+	return pathname === '/api/setup/status' || pathname === '/.well-known/oauth-protected-resource' || pathname === '/.well-known/oauth-protected-resource/mcp';
 }
 
 export const handle:Handle=async({event,resolve})=>{
