@@ -2,7 +2,7 @@ export const mcpAddonManifest = {
 	id: 'mcp',
 	name: 'OrbitFS MCP',
 	description: 'OAuth-authenticated startup, context, ChatGPT UI and MCP tools for OrbitFS.',
-	version: '0.2.0',
+	version: '0.3.0',
 	kind: 'panel-addon',
 	transportPath: '/mcp',
 	capabilities: ['mcp', 'oauth-2.1', 'pkce', 'startup', 'context', 'chatgpt-ui', 'mcp-apps'],
