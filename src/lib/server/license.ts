@@ -171,7 +171,7 @@ async function callProvider(licenseKey: string, installationId: string, activate
 	const response = await fetch(validateUrl(), {
 		method: 'POST',
 		headers,
-		body: JSON.stringify({ licenseKey, installationId, components: [PANEL_COMPONENT], activate }),
+		body: JSON.stringify({ licenseKey, installationId, components: [PANEL_COMPONENT, 'orbitfs_mcp'], activate }),
 		signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
 	});
 	const body = await response.json().catch(() => ({}));
@@ -271,3 +271,4 @@ export async function assertPanelLicensed() {
 	if (summary.licensed) return summary;
 	throw Object.assign(new Error('OrbitFS Base System licence is required'), { code: 'LICENSE_REQUIRED', status: 403, license: summary });
 }
+

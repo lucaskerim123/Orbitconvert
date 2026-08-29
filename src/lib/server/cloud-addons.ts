@@ -36,6 +36,10 @@ export async function presentAddon(row: any) {
 	const licensed = await addonLicensed(row.license_component);
 	const installed = row.installed === true;
 	const attached = installed && row.attached === true && licensed;
+	const manifest = row.manifest || {};
+	const base = String(row.deployment_url || '').replace(/\/$/,'');
+	const link = (href: string) => base && href?.startsWith('/') ? base + href : href;
+	const frontend = manifest.frontend ? { ...manifest.frontend, navigationGroups:(manifest.frontend.navigationGroups||[]).map((group:any)=>({...group,items:(group.items||[]).map((item:any)=>({...item,href:link(item.href)}))})), adminGroups:(manifest.frontend.adminGroups||[]).map((group:any)=>({...group,items:(group.items||[]).map((item:any)=>({...item,href:link(item.href)}))})), primaryNavigation:(manifest.frontend.primaryNavigation||[]).map((item:any)=>({...item,href:link(item.href)})), routes:[] } : null;
 	return {
 		id:row.id,name:row.name,description:row.description,version:row.version,
 		installed,attached,parked:installed && !attached,licensed,available:row.available !== false,
@@ -44,7 +48,7 @@ export async function presentAddon(row: any) {
 		licenseState:licensed ? 'enabled':'blocked',installStatus:installed ? 'installed':'registered',
 		installMethod:'cloud',supports:['install','configure','test','attach','detach','uninstall'],
 		deploymentUrl:row.deployment_url,transportPath:row.transport_path,sourceRef:row.source_ref,
-		manifest:row.manifest || {},runtime:row.runtime || {},config:row.config || {},
+		manifest,frontend,runtime:row.runtime || {},config:row.config || {},
 		wiring:{ package:false,panel:true,backend:installed,frontend:installed,engine:installed,service:false }
 	};
 }
@@ -55,3 +59,4 @@ export async function saveCloudAddon(id: string, patch: Record<string, any>) {
 	if (result.error) throw result.error;
 	return presentAddon(result.data);
 }
+
