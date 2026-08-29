@@ -5,7 +5,7 @@ import { REGISTERED_USER_PERMISSION_DEFAULTS, USER_CAPABILITIES } from '$lib/ser
 
 export const FILE_ACTIONS = ['read','write','download','move','delete','create','share'] as const;
 export const MANAGEMENT_ACTIONS = [
-	'view_settings','edit_settings','manage_members','manage_permissions',
+	'view_settings','edit_settings','manage_members','manage_permissions','manage_library',
 	'view_protected_folders','manage_protected_folders','mcp_use','manage_mcp_startup',
 	'manage_mcp_preset_names','manage_mcp_projects','manage_mcp_settings',
 	'ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create',
@@ -15,8 +15,11 @@ export const MANAGEMENT_ACTIONS = [
 	'converter_view','converter_run','converter_manage_settings','delete_workspace'
 ] as const;
 
+export const BASE_MANAGEMENT_ACTIONS = ['view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages','delete_workspace'] as const;
+export const MANAGEMENT_LABELS: Record<string,string> = { view_settings:'View workspace settings',edit_settings:'Edit workspace settings',manage_members:'Manage members',manage_permissions:'Manage permissions',manage_library:'Manage Library / Knowledge',view_protected_folders:'View protected folders',manage_protected_folders:'Manage protected folders',ventmode_use:'Use Vent Mode',ventmode_configure:'Configure Vent Mode',ventmode_read:'View Vent Mode vents',ventmode_load:'Load Vent Mode vents',ventmode_create:'Create Vent Mode vents',ventmode_draft:'Save Vent Mode drafts',ventmode_upload:'Upload/finalise Vent Mode vents',ventmode_discard:'Discard Vent Mode working vents',ventmode_read_others:'View other users Vent Mode vents',ventmode_manage_others:'Manage other users Vent Mode vents',send_messages:'Send workspace messages',delete_workspace:'Delete workspace' };
+
 export const DEFAULT_WORKSPACE_SETTINGS = {
-	publicWorkspaceVisible:true, apexAccessMode:'workspace_owners', maxWorkspacesPerUser:2,
+	publicWorkspaceVisible:false, apexAccessMode:'workspace_owners', maxWorkspacesPerUser:2,
 	inactiveBeforeOfflineDays:30, offlineWarningDays:7, deleteAfterOfflineDays:30,
 	deletionWarningDays:7, defaultMaxProfiles:20, defaultMaxProfileSizeMB:50,
 	defaultMaxTotalProfileStorageMB:0
@@ -28,7 +31,7 @@ const MANAGEMENT_DEFAULTS: Record<string,Record<string,boolean>> = {
 		delete_workspace:false
 	},
 	contributor: {
-		view_settings:false, edit_settings:false, manage_members:false, manage_permissions:false,
+		view_settings:false, edit_settings:false, manage_members:false, manage_permissions:false, manage_library:false,
 		view_protected_folders:false, manage_protected_folders:false, mcp_use:true,
 		manage_mcp_startup:false, manage_mcp_preset_names:false, manage_mcp_projects:false,
 		manage_mcp_settings:false, ventmode_use:true, ventmode_configure:false, ventmode_read:true,
@@ -176,7 +179,7 @@ export async function workspaceStats(workspaceId: string) {
 export async function presentWorkspace(user: OrbitUser, workspace: any, role?: string | null) {
 	const supabase = getSupabaseAdmin();
 	const resolved = role ?? await workspaceRole(user,workspace) ?? 'viewer';
-	const ownerId = workspace.owner_id || workspace.created_by || null;
+	const ownerId = workspace.visibility === 'public' ? null : (workspace.owner_id || workspace.created_by || null);
 	let ownerUsername = 'System';	if (ownerId) {
 		const owner = await supabase.from('orbitfs_users').select('username').eq('id',ownerId).maybeSingle();
 		if (owner.error) throw owner.error;
@@ -202,16 +205,36 @@ export async function presentWorkspace(user: OrbitUser, workspace: any, role?: s
 
 export async function visibleWorkspaces(user: OrbitUser) {
 	const supabase = getSupabaseAdmin();
-	const result = await supabase.from('orbitfs_workspaces').select('*')
-		.neq('status','archived').order('is_main',{ascending:false}).order('name');
-	if (result.error) throw result.error;
+	const [workspaceResult,memberResult,settingResult,permissions,globalSettings] = await Promise.all([
+		supabase.from('orbitfs_workspaces').select('*').neq('status','archived').order('is_main',{ascending:false}).order('name'),
+		supabase.from('orbitfs_workspace_members').select('workspace_id,role').eq('user_id',user.id),
+		supabase.from('orbitfs_settings').select('scope_id,value').eq('scope_type','workspace').eq('key','management_permissions'),
+		effectiveUserPermissions(user),
+		readWorkspaceSettings()
+	]);
+	for (const result of [workspaceResult,memberResult,settingResult]) if (result.error) throw result.error;
+	const workspaces = workspaceResult.data ?? [];
+	const ownerIds = [...new Set(workspaces.map((ws:any) => ws.owner_id || ws.created_by).filter(Boolean))];
+	const ownerResult = ownerIds.length ? await supabase.from('orbitfs_users').select('id,username').in('id',ownerIds) : { data:[],error:null } as any;
+	if (ownerResult.error) throw ownerResult.error;
+	const ownerNames = new Map((ownerResult.data ?? []).map((row:any) => [row.id,row.username]));
+	const memberRoles = new Map((memberResult.data ?? []).map((row:any) => [row.workspace_id,row.role]));
+	const managementOverrides = new Map((settingResult.data ?? []).map((row:any) => [row.scope_id,row.value || {}]));
 	const visible:any[] = [];
-	for (const workspace of result.data ?? []) {
-		const role = await workspaceRole(user,workspace);
-		if (role) visible.push(await presentWorkspace(user,workspace,role));
+	for (const workspace of workspaces) {
+		let role:string|null = isSystemAdmin(user) ? 'owner' : (workspace.owner_id===user.id || workspace.created_by===user.id ? 'owner' : String(memberRoles.get(workspace.id) || '') || null);
+		if (!role && workspace.visibility==='public' && permissions.access_public_workspace) role='viewer';
+		if (!role) continue;
+		const overrides:any = managementOverrides.get(workspace.id) || {};
+		const management = isSystemAdmin(user) || role==='owner' ? { ...OWNER_MANAGEMENT } : Object.fromEntries(MANAGEMENT_ACTIONS.map((key)=>[key,Boolean(overrides?.[role]?.[key] ?? MANAGEMENT_DEFAULTS[role]?.[key])]));
+		if (workspace.apex_system_enabled===false || globalSettings.apexAccessMode==='admins_only' || (globalSettings.apexAccessMode==='workspace_owners' && role!=='owner')) for (const key of MANAGEMENT_ACTIONS.filter((item)=>item.startsWith('sorter_')||item.startsWith('converter_'))) management[key]=false;
+		if (role!=='owner') { management.ventmode_configure=false; management.ventmode_read_others=false; management.ventmode_manage_others=false; }
+		const ownerId=workspace.visibility==='public' ? null : (workspace.owner_id || workspace.created_by || null);
+		visible.push({ ...workspace,owner_id:ownerId,owner_username:ownerNames.get(ownerId)||'System',permission:role,is_public:workspace.visibility==='public',auto_delete_immune:Boolean(workspace.auto_delete_immune||workspace.delete_protected),drive_state:workspace.status==='active'?'online':'offline',management_permissions:management });
 	}
 	return visible;
 }
+
 export async function workspaceMembers(workspaceId: string) {
 	const supabase = getSupabaseAdmin();
 	const result = await supabase.from('orbitfs_workspace_members')
@@ -285,6 +308,13 @@ export async function createWorkspace(user: OrbitUser, input: Record<string,any>
 		if ((count.count ?? 0) >= Number(settings.maxWorkspacesPerUser))
 			throw Object.assign(new Error('Workspace limit reached'), { status:409 });
 	}
+	let owner = user;
+	if (input.ownerUsername && isSystemAdmin(user)) {
+		const requestedOwner = await supabase.from('orbitfs_users').select('*').ilike('username',String(input.ownerUsername).trim()).maybeSingle();
+		if (requestedOwner.error) throw requestedOwner.error;
+		if (!requestedOwner.data) throw Object.assign(new Error('Workspace owner user not found'), { status:404 });
+		owner = requestedOwner.data as OrbitUser;
+	}
 	const name = String(input.name ?? '').trim().slice(0,80);
 	if (name.length < 2) throw Object.assign(new Error('Workspace name must be at least 2 characters'), { status:400 });
 	let slug = cleanWorkspaceSlug(name);
@@ -293,12 +323,12 @@ export async function createWorkspace(user: OrbitUser, input: Record<string,any>
 	if ((existing.data ?? []).length) slug = `${slug}-${Date.now().toString(36)}`;
 	const created = await supabase.from('orbitfs_workspaces').insert({
 		name,slug,description:String(input.description ?? '').slice(0,500),status:'active',visibility:'private',
-		owner_id:user.id,created_by:user.id,storage_quota_bytes:5*1024**3,trash_limit_bytes:200*1024**2,
+		owner_id:owner.id,created_by:user.id,storage_quota_bytes:5*1024**3,trash_limit_bytes:200*1024**2,
 		mcp_ui_enabled:false,mcp_system_enabled:true,apex_system_enabled:true
 	}).select('*').single();
 	if (created.error || !created.data) throw created.error ?? new Error('Workspace creation failed');
-	const member = await supabase.from('orbitfs_workspace_members').insert({ workspace_id:created.data.id,user_id:user.id,role:'owner',mcp_enabled:false });
+	const member = await supabase.from('orbitfs_workspace_members').insert({ workspace_id:created.data.id,user_id:owner.id,role:'owner',mcp_enabled:false });
 	if (member.error) throw member.error;
-	await ensureCoreFolders(created.data.id,user.id);
-	return presentWorkspace(user,created.data,'owner');
+	await ensureCoreFolders(created.data.id,owner.id);
+	return presentWorkspace(user,created.data,owner.id === user.id || isSystemAdmin(user) ? 'owner' : null);
 }

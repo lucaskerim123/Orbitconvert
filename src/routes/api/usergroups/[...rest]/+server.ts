@@ -2,11 +2,12 @@ import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
+import { writeAudit } from '$lib/server/audit';
 
 export async function DELETE({ params, cookies }: any) {
 	try {
 		await assertPanelLicensed();
-		await requireAdmin(cookies);
+		const actor = await requireAdmin(cookies);
 		const name = decodeURIComponent(String(params.rest || '')).trim();
 		if (!name) return json({ error:'Group name is required' }, { status:400 });
 		const supabase = getSupabaseAdmin();
@@ -17,6 +18,7 @@ export async function DELETE({ params, cookies }: any) {
 		if (members.error) throw members.error;
 		const deleted = await supabase.from('orbitfs_groups').delete().eq('id',group.data.id);
 		if (deleted.error) throw deleted.error;
+		await writeAudit({ actorUserId:actor.id, action:'usergroup.delete', targetType:'usergroup', targetId:group.data.id, detail:{ name } });
 		return json({ ok:true });
 	} catch (error:any) {
 		return json({ error:String(error?.message || 'Could not delete group') }, { status:Number(error?.status || 500) });

@@ -23,6 +23,7 @@
 		ScrollText,
 		ChevronDown,
 		ContactRound,
+		Library,
 		Users,
 		Download
 	} from '@lucide/svelte';
@@ -60,7 +61,7 @@
 	);
 	const primaryNav = $derived([
 		{ label: 'Files', href: '/', icon: Folder },
-		{ label: 'Profiles', href: '/profiles', icon: ContactRound },
+		{ label: 'Library', href: '/library', icon: Library },
 		{ label: 'Workspace Manager', href: '/workspaces', icon: Building2 },
 		...addonPrimaryNav
 	]);
@@ -258,7 +259,7 @@
 	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
 	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
 	const isFilesRoute = $derived(page.url.pathname === '/');
-	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces')));
+	const showWorkspaceSelector = $derived(workspace.enabled && isFilesRoute);
 
 	// Search is Files-scoped, but the box lives in the shared header - reset it whenever
 	// the user navigates away so it doesn't silently keep filtering a page it can't affect.
@@ -294,20 +295,10 @@
 		if (bootstrappedToken === token) return;
 		bootstrappedToken = token;
 
-		api
-			.get<{
-				user?: { username: string; role: 'owner' | 'admin' | 'user'; email?: string; permissions?: Record<string, boolean> };
-				username?: string;
-				role?: 'owner' | 'admin' | 'user';
-				email?: string;
-			}>('/me')
-			.then((res) =>
-				auth.setUser(res.user ?? { username: res.username!, role: res.role!, email: res.email })
-			)
-			.catch(() => {});
-		addons.load();
+		addons.load().then(() => {
+			if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+		});
 		workspace.load();
-		loadWorkspaceAddonAccess();
 		loadNotificationCount();
 		redirectIfLicenceInvalid(false);
 	});
@@ -320,18 +311,18 @@
 	// that hit the Files page fetch earlier.
 	onMount(() => {
 		function resync() {
-			if (auth.isAuthenticated) {
-				addons.load();
-				workspace.load();
-				loadWorkspaceAddonAccess();
-				loadNotificationCount();
-				redirectIfLicenceInvalid(true);
-			}
+			if (!auth.isAuthenticated) return;
+			addons.load().then(() => {
+				if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+			});
+			if (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces')) void workspace.load();
+			void loadNotificationCount();
+			void redirectIfLicenceInvalid(true);
 		}
 		function onVisible() {
 			if (document.visibilityState === 'visible') resync();
 		}
-		const interval = setInterval(resync, 60_000);
+		const interval = setInterval(resync, 300_000);
 		document.addEventListener('visibilitychange', onVisible);
 		return () => {
 			clearInterval(interval);

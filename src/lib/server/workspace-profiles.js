@@ -3,16 +3,16 @@ import crypto from 'node:crypto';
 import { getSupabaseAdmin } from './supabase';
 
 export const PROFILE_PERMISSIONS = Object.freeze([
-  'view','create','edit','edit_assigned','mcp_edit','approve_edits','delete','import','export',
+  'view','create','edit','edit_assigned','queue_profile_commands','approve_profile_commands','delete','import','export','repair',
   'manage_fields','manage_templates','manage_permissions','manage_startup',
   'load_context','view_restricted','edit_restricted'
 ]);
 
 export const PROFILE_ROLE_DEFAULTS = Object.freeze({
   owner: Object.freeze(Object.fromEntries(PROFILE_PERMISSIONS.map((key) => [key, true]))),
-  editor: Object.freeze({ view:true, create:true, edit:true, edit_assigned:true, mcp_edit:true, approve_edits:true, delete:true, import:true, export:true, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
-  contributor: Object.freeze({ view:true, create:true, edit:false, edit_assigned:true, mcp_edit:false, approve_edits:false, delete:false, import:true, export:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
-  viewer: Object.freeze({ view:true, create:false, edit:false, edit_assigned:false, mcp_edit:false, approve_edits:false, delete:false, import:false, export:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:false, view_restricted:false, edit_restricted:false })
+  editor: Object.freeze({ view:true, create:true, edit:true, edit_assigned:true, queue_profile_commands:true, approve_profile_commands:true, delete:true, import:true, export:true, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
+  contributor: Object.freeze({ view:true, create:true, edit:false, edit_assigned:true, queue_profile_commands:true, approve_profile_commands:false, delete:false, import:true, export:false, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:true, view_restricted:false, edit_restricted:false }),
+  viewer: Object.freeze({ view:true, create:false, edit:false, edit_assigned:false, queue_profile_commands:false, approve_profile_commands:false, delete:false, import:false, export:false, repair:false, manage_fields:false, manage_templates:false, manage_permissions:false, manage_startup:false, load_context:false, view_restricted:false, edit_restricted:false })
 });
 
 const now = () => new Date().toISOString();
@@ -680,7 +680,7 @@ function normaliseRelationshipList(value) {
 }
 
 function canApproveProfileEdit(permissions, role) {
-  return role === 'owner' || permissions.approve_edits === true;
+  return role === 'owner' || permissions.approve_profile_commands === true;
 }
 
 export async function createProfileEditRequest(workspaceRoot, input, actor, role, userId, systemRole = 'user') {
@@ -783,6 +783,53 @@ export async function resolveProfileEditRequest(workspaceRoot, requestId, input,
     await saveProfileState(workspaceRoot, state);
   }
   return { request, applied };
+}
+
+export async function repairProfileState(workspaceRoot, actor, role, userId) {
+  const state = await readProfileState(workspaceRoot);
+  requireProfilePermission(state, role, userId, 'repair');
+  let repaired = 0;
+  const active = (state.profiles || []).filter((profile) => !profile.deletedAt);
+  for (const profile of active) {
+    const before = JSON.stringify(profile.sections || []);
+    profile.sections = mergeBaseSections(Array.isArray(profile.sections) ? profile.sections : []);
+    if (!profile.fields || typeof profile.fields !== 'object' || Array.isArray(profile.fields)) profile.fields = {};
+    if (!Array.isArray(profile.editorIds)) profile.editorIds = [];
+    if (!Array.isArray(profile.viewerIds)) profile.viewerIds = [];
+    if (JSON.stringify(profile.sections) !== before) repaired += 1;
+  }
+  for (const profile of active) syncReverseRelationships(state, profile, actor);
+  const valid = new Set(active.map((profile) => profile.id));
+  for (const bundle of state.profileBundles || []) bundle.profileIds = [...new Set((bundle.profileIds || []).filter((id) => valid.has(id)))];
+  for (const [uid, slot] of Object.entries(state.userSlots || {})) state.userSlots[uid] = { ...slot, master: valid.has(slot?.master) ? slot.master : null, additional: valid.has(slot?.additional) ? slot.additional : null };
+  state.audit.push({ id: crypto.randomUUID(), action: 'profiles_repaired', actor, at: now(), repaired });
+  await saveProfileState(workspaceRoot, state);
+  return { ok: true, repaired, profiles: active.length };
+}
+
+export async function createProfileCommandRequest(workspaceRoot, input, actor, role, userId, systemRole = 'user') {
+  const state = await readProfileState(workspaceRoot);
+  const permissions = profilePermissions(state, role, userId);
+  if (!permissions.queue_profile_commands) throw Object.assign(new Error('Profile command queue permission required'), { status: 403, code: 'PROFILE_QUEUE_PERMISSION_REQUIRED' });
+  const command = clean(input.command, 40);
+  if (!['create','edit','archive','import','repair'].includes(command)) throw Object.assign(new Error('Unsupported queued profile command'), { status: 400, code: 'INVALID_PROFILE_COMMAND' });
+  const profileId = clean(input.profileId || input.payload?.profileId || '', 120);
+  const profile = profileId ? state.profiles.find((item) => item.id === profileId && !item.deletedAt) : null;
+  if (profileId && !profile) throw Object.assign(new Error('Profile not found'), { status: 404 });
+  if (profile && !canAccessProfile(profile, permissions, userId, role, systemRole)) throw Object.assign(new Error('Profile not found'), { status: 404 });
+  const request = {
+    id: crypto.randomUUID(), command, profileId: profile?.id || null,
+    profileName: profile?.name || clean(input.payload?.name || input.payload?.profile?.name || '',160) || command,
+    requestedBy: actor, requestedByUserId: userId, requestedAt: now(), status: 'pending',
+    summary: clean(input.summary || `${command} profile command requested from ChatGPT`,500),
+    payload: input.payload || {}, patch: command === 'edit' ? (input.payload?.patch || input.payload || {}) : (input.payload || {}),
+    patchKeys: Object.keys(input.payload || {}), baseVersion: Number(profile?.version || 0), applyState: 'waiting_approval'
+  };
+  state.profileEditRequests = Array.isArray(state.profileEditRequests) ? state.profileEditRequests : [];
+  state.profileEditRequests.push(request);
+  state.audit.push({ id: crypto.randomUUID(), action: 'profile_command_requested', command, profileId: request.profileId, requestId: request.id, actor, at: now() });
+  await saveProfileState(workspaceRoot, state);
+  return request;
 }
 
 export async function deleteProfile(workspaceRoot, profileId, actor, role, userId) {
@@ -940,6 +987,16 @@ export async function profileContext(workspaceRoot, role, userId, mode = 'summar
   if (!state.enabled) return { enabled: false, profiles: [] };
   const profiles = contextProfiles(state, permissions, userId, role, systemRole).map((profile) => sanitizeProfileLabels(profile, permissions));
   return { enabled: true, mode, settings: state.settings, profiles: profiles.map((profile) => presentProfileForMode(profile, mode)) };
+}
+
+export async function profileKnowledgeProjection(workspaceRoot, profileId, role, userId, systemRole = 'user') {
+  const state = await readProfileState(workspaceRoot);
+  const permissions = requireProfilePermission(state, role, userId, 'view');
+  if (!state.enabled) throw Object.assign(new Error('Workspace Profiles is disabled'), { status: 503 });
+  const profile = (state.profiles || []).find((entry) => String(entry.id) === String(profileId));
+  if (!profile || !canAccessProfile(profile, permissions, userId, role, systemRole)) throw Object.assign(new Error('Profile is not accessible'), { status: 404 });
+  const sanitized = sanitizeProfileLabels(profile, permissions);
+  return { profile: sanitized, permissions: { viewRestricted: permissions.view_restricted === true }, projection: { userId, role, systemRole, profileId: sanitized.id, updatedAt: sanitized.updatedAt || null } };
 }
 
 export async function profileModule(workspaceRoot, role, userId, systemRole = 'user') {

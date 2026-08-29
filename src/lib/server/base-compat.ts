@@ -109,8 +109,8 @@ export async function selectedWorkspace(request: Request, user: OrbitUser) {
 function defaultPermissions(role: WorkspaceRole): FolderPermissions & { manage: boolean } {
 	if (role === 'owner') return { read: true, write: true, download: true, move: true, delete: true, create: true, share: true, manage: true };
 	if (role === 'editor') return { read: true, write: true, download: true, move: true, delete: true, create: true, share: true, manage: false };
-	if (role === 'contributor') return { read: true, write: true, download: true, move: true, delete: false, create: true, share: true, manage: false };
-	return { read: true, write: false, download: true, move: false, delete: false, create: false, share: false, manage: false };
+	if (role === 'contributor') return { read: true, write: true, download: true, move: false, delete: false, create: true, share: false, manage: false };
+	return { read: true, write: false, download: false, move: false, delete: false, create: false, share: false, manage: false };
 }
 
 export async function permissionsForPath(user: OrbitUser, workspaceId: string, path: string) {

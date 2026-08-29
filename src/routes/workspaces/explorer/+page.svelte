@@ -12,7 +12,6 @@
 	import PluginSlot from '$lib/plugin-slot.svelte';
 	import WorkspaceFileToolbarActions from '$lib/workspace-file-toolbar-actions.svelte';
 	import { Button } from '$lib/components/ui';
-	import FileViewer from '$lib/components/file-viewer.svelte';
 	import FolderPicker from '$lib/components/folder-picker.svelte';
 	import ShareModal from '$lib/components/share-modal.svelte';
 	import PermissionsModal from '$lib/components/permissions-modal.svelte';
@@ -34,7 +33,8 @@
 		Search,
 		FolderOpen,
 		ArrowLeft,
-		Check
+		Check,
+		LibraryBig
 	} from '@lucide/svelte';
 
 	type Entry = {
@@ -97,6 +97,7 @@
 		pct: number;
 		error?: string;
 		done?: boolean;
+		active?: boolean;
 		extractZip?: boolean;
 		targetDir: string;
 	};
@@ -125,6 +126,14 @@
 	let driveAccessToken = $state('');
 	let busyPath = $state<string | null>(null);
 	let viewerPath = $state<string | null>(null);
+	let FileViewerComponent = $state<any>(null);
+	let fileViewerLoading = $state(false);
+	async function ensureFileViewer() {
+		if (FileViewerComponent || fileViewerLoading) return;
+		fileViewerLoading = true;
+		try { FileViewerComponent = (await import('$lib/components/file-viewer.svelte')).default; }
+		finally { fileViewerLoading = false; }
+	}
 	let sharePath = $state<{ path: string; name: string } | null>(null);
 	let renamingPath = $state<string | null>(null);
 	let renameValue = $state('');
@@ -134,6 +143,8 @@
 	let bulkBusy = $state(false);
 	let trashPurgeBusy = $state(false);
 	let canManagePermissions = $state(false);
+	let canManageLibrary = $state(false);
+	let libraryMessage = $state('');
 	let permissionTarget = $state<{ path: string; kind: 'file' | 'folder' } | null>(null);
 	const currentWorkspace = $derived(workspace.current);
 	const hasWorkspaceChoices = $derived(workspace.workspaces.length > 0);
@@ -196,9 +207,11 @@
 				entries: Entry[];
 				folderPermissions: FolderPermissions;
 				canManagePermissions: boolean;
+				canManageLibrary: boolean;
 			}>(`/files?subpath=${encodeURIComponent(currentPath)}`);
 			folderPermissions = res.folderPermissions;
 			canManagePermissions = Boolean(res.canManagePermissions);
+			canManageLibrary = Boolean(res.canManageLibrary);
 			entries = [...res.entries].sort((a, b) =>
 				a.type === b.type ? a.name.localeCompare(b.name) : a.type === 'dir' ? -1 : 1
 			);
@@ -226,6 +239,10 @@
 
 	$effect(() => {
 		if (creatingFolder) void tick().then(() => newFolderInput?.focus());
+	});
+
+	$effect(() => {
+		if (viewerPath) void ensureFileViewer();
 	});
 
 	$effect(() => {
@@ -465,29 +482,34 @@
 		}
 	}
 
+	async function registerInLibrary(entry: Entry, fullPath: string) {
+		const workspaceId = String(workspace.currentId || fileContext.currentId || '');
+		if (!workspaceId || !canManageLibrary) return;
+		busyPath = fullPath;
+		libraryMessage = '';
+		try {
+			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(workspaceId)}/items`, {
+				provider: 'base.files', sourceKind: entry.type === 'dir' ? 'folder' : 'file', path: fullPath, name: entry.name
+			});
+			libraryMessage = result.existing ? `${entry.name} is already registered in Library.` : `${entry.name} registered in Library.`;
+		} catch (err) {
+			error = err instanceof ApiError ? err.message : 'Could not register in Library';
+		} finally { busyPath = null; }
+	}
+
 	async function runUpload(job: UploadJob) {
-		job.pct = 0;
-		job.error = undefined;
-		job.done = false;
+		job.pct = 0; job.error = undefined; job.done = false; job.active = true; uploads = [...uploads];
+		const updateProgress = (pct: number) => { job.pct = Math.max(0, Math.min(100, pct)); uploads = [...uploads]; };
 		try {
 			if (job.extractZip) {
-				if (!job.file.name.toLowerCase().endsWith('.zip'))
-					throw new ApiError('Only .zip files can be extracted', 415);
-				await api.uploadZipExtract(job.targetDir, job.file, (pct) => (job.pct = pct));
+				if (!job.file.name.toLowerCase().endsWith('.zip')) throw new ApiError('Only .zip files can be extracted', 415);
+				await api.uploadZipExtract(job.targetDir, job.file, updateProgress);
 			} else {
-				await api.upload(
-					`/upload?path=${encodeURIComponent(joinPath(job.targetDir, job.file.name))}`,
-					job.file,
-					(pct) => (job.pct = pct)
-				);
+				await api.uploadChunked(`/upload-chunked?path=${encodeURIComponent(joinPath(job.targetDir, job.file.name))}`, job.file, updateProgress);
 			}
-			job.pct = 100;
-			job.done = true;
-		} catch (err) {
-			job.error = err instanceof ApiError ? err.message : 'Upload failed';
-		} finally {
-			uploads = [...uploads];
-		}
+			job.pct = 100; job.done = true; await load();
+		} catch (err) { job.error = err instanceof ApiError ? err.message : 'Upload failed'; }
+		finally { job.active = false; uploads = [...uploads]; }
 	}
 
 	async function handleFiles(fileList: FileList | null) {
@@ -952,6 +974,12 @@
 			<button onclick={() => (error = '')} aria-label="Dismiss"><X class="size-4" /></button>
 		</div>
 	{/if}
+	{#if libraryMessage}
+		<div class="flex items-center justify-between rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-300">
+			{libraryMessage}
+			<button onclick={() => (libraryMessage = '')} aria-label="Dismiss"><X class="size-4" /></button>
+		</div>
+	{/if}
 
 	<div class="overflow-x-auto rounded-md border border-border bg-card">
 		{#if loading}
@@ -1089,6 +1117,17 @@
 								<div
 									class="flex justify-end gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100"
 								>
+									{#if canManageLibrary}
+										<button
+											class="flex size-7 items-center justify-center rounded-md text-emerald-400 hover:bg-emerald-500/15 hover:text-emerald-300"
+											aria-label="Register {entry.name} in Library"
+											title="Register in Library"
+											disabled={busyPath === fullPath}
+											onclick={() => registerInLibrary(entry, fullPath)}
+										>
+											<LibraryBig class="size-4" />
+										</button>
+									{/if}
 									{#if !entry.protected && canManagePermissions}
 										<button
 											class="flex size-7 items-center justify-center rounded-md text-violet-400 hover:bg-violet-500/15 hover:text-violet-300"
@@ -1191,28 +1230,32 @@
 
 {#if viewerPath}
 	<PluginSlot slot="file-view-actions" path={viewerPath} name={basename(viewerPath)} kind="file" workspaceId={fileContext.currentId} />
-	<FileViewer
+	{#if FileViewerComponent}
+	<FileViewerComponent
 		path={viewerPath}
 		onClose={() => (viewerPath = null)}
 		onSaved={load}
 		exportAvailable={addons.available('mcp')}
 		onAccess={canManagePermissions
-			? (path) => {
+			? (path: string) => {
 					viewerPath = null;
 					permissionTarget = { path, kind: 'file' };
 				}
 			: undefined}
 		onRename={startRenamePath}
-		onMove={(path) => {
+		onMove={(path: string) => {
 			viewerPath = null;
 			movePaths = [path];
 		}}
-		onShare={(path, name) => {
+		onShare={(path: string, name: string) => {
 			viewerPath = null;
 			sharePath = { path, name };
 		}}
 		onTrash={trashPath}
 	/>
+	{:else}
+		<div class="fixed inset-0 z-40 flex items-center justify-center bg-background text-muted-foreground"><LoaderCircle class="size-6 animate-spin" /> Loading viewer…</div>
+	{/if}
 {/if}
 
 {#if movePaths}

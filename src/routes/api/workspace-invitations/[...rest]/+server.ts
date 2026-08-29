@@ -3,6 +3,7 @@ import { requireAdmin, hashPassword } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { normalizeUserPermissions, readRegistrationSettings } from '$lib/server/registration';
+import { writeAudit } from '$lib/server/audit';
 
 export async function POST({ params, request, cookies }: any) {
 	try {
@@ -21,8 +22,16 @@ export async function POST({ params, request, cookies }: any) {
 		const username = String(invitation.payload?.username || '').trim();
 		const permission = ['editor','contributor','viewer'].includes(String(invitation.payload?.permission)) ? String(invitation.payload.permission) : 'viewer';
 		let target = await supabase.from('orbitfs_users').select('*').ilike('username',username).maybeSingle();
-		if (target.error) throw target.error;		if (approved && !target.data) {
-			return json({ error:'User must register before this invitation can be approved',needsRegistration:true }, { status:409 });
+		if (target.error) throw target.error;
+		if (approved && !target.data) {
+			const settings = await readRegistrationSettings(false);
+			const created = await supabase.from('orbitfs_users').insert({
+				username, display_name:username, email:null, role:'user', status:'active',
+				password_hash:hashPassword('0000'), must_change_pin:true,
+				permissions:normalizeUserPermissions(settings.defaultPermissions)
+			}).select('*').single();
+			if (created.error || !created.data) throw created.error ?? new Error('Could not create invited user');
+			target = { data:created.data, error:null } as any;
 		}
 		if (approved && target.data) {
 			const member = await supabase.from('orbitfs_workspace_members').upsert({
@@ -40,6 +49,7 @@ export async function POST({ params, request, cookies }: any) {
 			payload:{ ...(invitation.payload || {}),response_message:String(body.message ?? '').slice(0,500) }
 		}).eq('id',invitation.id).select('*').single();
 		if (updated.error) throw updated.error;
+		await writeAudit({ actorUserId:admin.id, workspaceId:invitation.workspace_id, action:approved ? 'workspace.invitation.approve' : 'workspace.invitation.deny', targetType:'workspace_invitation', targetId:invitation.id, detail:{ username,permission } });
 		return json({ invitation:{ id:updated.data.id,workspace_id:updated.data.workspace_id,...updated.data.payload,status:updated.data.status,created_at:updated.data.created_at },user:target.data ? { username:target.data.username,role:target.data.role } : null });
 	} catch (error:any) {
 		return json({ error:String(error?.message || 'Could not respond to invitation') }, { status:Number(error?.status || 500) });

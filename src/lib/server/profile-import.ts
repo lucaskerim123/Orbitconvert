@@ -1,7 +1,3 @@
-import JSZip from 'jszip';
-import mammoth from 'mammoth';
-import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-
 function cleanSlug(value: string) {
 	return String(value || '').toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 120) || 'section';
 }
@@ -30,6 +26,7 @@ export function profilePayloadFromText(text: string, filename = 'Imported profil
 }
 
 async function pdfText(buffer: Buffer) {
+	const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
 	const doc = await getDocument({ data: new Uint8Array(buffer) }).promise;
 	try {
 		const pages: string[] = [];
@@ -49,6 +46,7 @@ export async function parseProfileUpload(buffer: Buffer, filename: string, conte
 	if (lower.endsWith('.json') || contentType.includes('application/json')) return JSON.parse(buffer.toString('utf8'));
 	if (lower.endsWith('.pdf') || contentType.includes('application/pdf')) return profilePayloadFromText(await pdfText(buffer), filename);
 	if (lower.endsWith('.docx') || contentType.includes('wordprocessingml')) {
+		const mammoth = (await import('mammoth')).default;
 		const result = await mammoth.extractRawText({ buffer });
 		return profilePayloadFromText(result.value, filename);
 	}
@@ -58,6 +56,7 @@ export async function parseProfileUpload(buffer: Buffer, filename: string, conte
 
 async function parseProfileZipUpload(buffer: Buffer) {
 	if (buffer.length > 50 * 1024 * 1024) return fail('Profile ZIP is too large (50 MB maximum)', 413);
+	const JSZip = (await import('jszip')).default;
 	const archive = await JSZip.loadAsync(buffer);
 	const supported = Object.values(archive.files).filter((entry) => !entry.dir && /\.(json|md|markdown|txt|pdf|docx)$/i.test(entry.name));
 	if (supported.length > 500) return fail('Profile ZIP contains too many files (500 maximum)', 413);

@@ -3,6 +3,7 @@ import { requireUser } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { writeAudit } from '$lib/server/audit';
+import { profileCatalog } from '$lib/server/workspace-profiles.js';
 import { listEntries, purgeEntry } from '$lib/server/base-compat';
 import {
 	fileRoleOverrides, getWorkspace, isSystemAdmin, managementPermissionResponse,
@@ -30,6 +31,17 @@ export async function GET({ params, cookies }: any) {
 		await requireWorkspaceAccess(user,workspace);
 		if (parts.length === 1 || parts[1] === 'stats')
 			return json({ workspace:await presentWorkspace(user,workspace) });
+		if (parts[1] === 'details') {
+			const role = await workspaceRole(user,workspace) ?? 'viewer';
+			const [presented,members,overrides,management,messageResult,profile] = await Promise.all([
+				presentWorkspace(user,workspace,role),
+				workspaceMembers(workspace.id), fileRoleOverrides(workspace.id), managementPermissionResponse(workspace.id),
+				supabase.from('orbitfs_workspace_messages').select('*').eq('workspace_id',workspace.id).order('created_at',{ascending:false}).limit(100),
+				profileCatalog(workspace.id,role,user.id,user.role).catch(() => null)
+			]);
+			if (messageResult.error) throw messageResult.error;
+			return json({ workspace:presented,members,overrides,management,messages:await messageRows(messageResult.data ?? []),profile });
+		}
 		if (parts[1] === 'members') return json({ members:await workspaceMembers(workspace.id) });
 		if (parts[1] === 'permission-overrides') return json({ overrides:await fileRoleOverrides(workspace.id) });
 		if (parts[1] === 'management-permissions') return json(await managementPermissionResponse(workspace.id));
@@ -98,6 +110,7 @@ export async function PATCH({ params, request, cookies }: any) {
 			if (workspace.mcp_system_enabled === false && body.mcpEnabled) throw Object.assign(new Error('MCP access is blocked for this workspace'), { status:403 });
 			patch.mcp_ui_enabled = Boolean(body.mcpEnabled);
 		}
+		const previousStatus = String(workspace.status || 'active');
 		if (body.status !== undefined) {
 			const status = String(body.status);
 			if (!['active','offline','suspended','archived'].includes(status)) throw Object.assign(new Error('Invalid workspace status'), { status:400 });
@@ -107,8 +120,23 @@ export async function PATCH({ params, request, cookies }: any) {
 			}
 			if (status === 'suspended' && !clean(body.suspensionReason ?? workspace.suspension_reason)) throw Object.assign(new Error('A suspension reason is required'), { status:400 });
 			if ((workspace.is_main || workspace.delete_protected || workspace.auto_delete_immune) && status === 'archived') throw Object.assign(new Error('This workspace is protected from archive/delete'), { status:409 });
+			if (status === 'active' && !isSystemAdmin(user) && !workspace.is_main) {
+				const other = await supabase.from('orbitfs_workspaces').update({ status:'offline',drive_state:'offline',mcp_ui_enabled:false,updated_at:now() })
+					.eq('owner_id',workspace.owner_id).neq('id',workspace.id).neq('is_main',true).eq('status','active');
+				if (other.error) throw other.error;
+			}
 			patch.status = status;
+			patch.drive_state = status === 'active' ? 'online' : 'offline';
 			if (status !== 'active') patch.mcp_ui_enabled = false;
+			if (status === 'suspended' && previousStatus !== 'suspended') {
+				const members = await workspaceMembers(workspace.id);
+				const recipients = [...new Set([workspace.owner_id,...members.map((member:any) => member.user_id)].filter(Boolean))];
+				if (recipients.length) {
+					const rows = recipients.map((userId:any) => ({ user_id:userId,title:`${workspace.name} suspended`,body:String(body.suspensionReason ?? workspace.suspension_reason ?? 'Workspace suspended'),level:'warning' }));
+					const notices = await supabase.from('orbitfs_notifications').insert(rows);
+					if (notices.error) throw notices.error;
+				}
+			}
 		}
 		patch.updated_at = now();
 		const result = await supabase.from('orbitfs_workspaces').update(patch).eq('id',workspace.id).select('*').single();
@@ -251,7 +279,7 @@ export async function DELETE({ params, cookies, url }: any) {
 			await requireWorkspacePermission(user,workspace,'delete_workspace');
 			if (workspace.is_main || workspace.delete_protected || workspace.auto_delete_immune)
 				throw Object.assign(new Error('This workspace is protected from delete'), { status:409 });
-			const archived = await supabase.from('orbitfs_workspaces').update({ status:'archived',mcp_ui_enabled:false,updated_at:now() }).eq('id',workspace.id);
+			const archived = await supabase.from('orbitfs_workspaces').update({ status:'archived',drive_state:'offline',mcp_ui_enabled:false,updated_at:now() }).eq('id',workspace.id);
 			if (archived.error) throw archived.error;
 			await writeAudit({ actorUserId:user.id,workspaceId:workspace.id,action:'workspace.archive',targetType:'workspace',targetId:workspace.id });
 			return json({ ok:true,recoverable:true });

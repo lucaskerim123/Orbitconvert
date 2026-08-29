@@ -17,14 +17,14 @@
 	}
 	async function save(e: Event) {
 		e.preventDefault(); saving = true; error = ''; saved = '';
-		try { await api.patch('/config/ports-urls', { values }); saved = 'Saved. Restart affected services to apply.'; }
+		try { await api.patch('/config/ports-urls', { values }); saved = 'Saved cloud endpoints.'; }
 		catch (e) { error = e instanceof ApiError ? e.message : 'Save failed'; }
 		finally { saving = false; }
 	}
 	load();
 </script><div class="mx-auto max-w-3xl space-y-5 p-4 md:p-6">
 	<div><h1 class="flex items-center gap-2 text-xl font-semibold"><Plug class="size-5" />Ports / URLs</h1>
-		<p class="text-sm text-muted-foreground">Network ports and service endpoints used by OrbitFS.</p></div>
+		<p class="text-sm text-muted-foreground">Public URLs and API endpoints used by OrbitFS cloud.</p></div>
 	{#if error}<p class="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">{error}</p>{/if}
 	{#if loading}<div class="flex justify-center py-16"><LoaderCircle class="size-5 animate-spin" /></div>
 	{:else}<Card><CardHeader><CardTitle>Endpoints</CardTitle></CardHeader><CardContent>

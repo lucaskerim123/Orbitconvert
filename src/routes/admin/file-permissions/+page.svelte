@@ -10,7 +10,7 @@
 	type Rule = { path: string; permissions: Permissions };
 
 	function emptyPermissions(): Permissions {
-		return { read: true, write: false, download: true, move: false, delete: false, create: false, share: false };
+		return { read: true, write: false, download: false, move: false, delete: false, create: false, share: false };
 	}
 
 	let rules = $state<Rule[]>([]);
@@ -117,7 +117,7 @@
 				File permissions
 			</h1>
 			<p class="text-sm text-muted-foreground">
-				Per-path rules for the <code>user</code> role on the main workspace. Folder rules inherit to
+				Per-path rules for the <code>viewer</code> role on the Public Workspace. Folder rules inherit to
 				children; the most specific matching path wins. Admins bypass all rules.
 			</p>
 		</div>
