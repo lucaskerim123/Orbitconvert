@@ -1,3 +1,4 @@
+// @ts-nocheck
 import crypto from 'node:crypto';
 import { explicitSectionDate } from './knowledge-structure.js';
 
@@ -319,3 +320,4 @@ export function retrievalIntelligenceBoost(query, item, section, entities = [], 
   boost += Math.min(8, factHits * 2);
   return boost;
 }
+

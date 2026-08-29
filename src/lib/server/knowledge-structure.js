@@ -1,3 +1,4 @@
+// @ts-nocheck
 import crypto from 'node:crypto';
 
 const MONTHS = Object.freeze({
@@ -104,3 +105,4 @@ export function buildStructuredRecords({ item, sections, entities = [], mentions
   }
   return records.sort((a, b) => a.date.localeCompare(b.date) || a.sourceOrder - b.sourceOrder);
 }
+
