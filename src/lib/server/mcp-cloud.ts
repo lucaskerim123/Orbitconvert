@@ -1,12 +1,18 @@
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { getPanelLicenseSummary } from '$lib/server/license';
+import { activateLicenseComponent, getPanelLicenseSummary } from '$lib/server/license';
 
 export const MCP_COMPONENT = 'orbitfs_mcp';
 
 export async function assertMcpLicensed() {
-	const summary = await getPanelLicenseSummary();
-	const component = summary.components?.[MCP_COMPONENT] ?? null;
-	const allowed = Boolean(component?.allowed && component?.lockedToThisInstallation && ['enabled', 'locked'].includes(String(component?.state || '')));
+	let summary = await getPanelLicenseSummary({ refresh: true });
+	let component = summary.components?.[MCP_COMPONENT] ?? null;
+	let allowed = Boolean(component?.allowed && component?.lockedToThisInstallation && ['enabled', 'locked'].includes(String(component?.state || '')));
+	if (!allowed) {
+		const activated = await activateLicenseComponent(MCP_COMPONENT);
+		summary = activated.summary;
+		component = activated.component;
+		allowed = Boolean(component?.allowed && component?.lockedToThisInstallation && ['enabled', 'locked'].includes(String(component?.state || '')));
+	}
 	if (!allowed) throw Object.assign(new Error('OrbitFS MCP licence is required'), { status: 403, code: 'MCP_LICENSE_REQUIRED' });
 	return { summary, component };
 }

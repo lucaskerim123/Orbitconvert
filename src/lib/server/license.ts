@@ -163,7 +163,7 @@ function unlicensedSummary(installationId: string, row: LicenseRow | null, reaso
 	};
 }
 
-async function callProvider(licenseKey: string, installationId: string, activate: boolean) {
+async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [PANEL_COMPONENT, 'orbitfs_mcp']) {
 	if (!licenseKey) throw Object.assign(new Error('Licence key is required'), { code: 'LICENSE_KEY_REQUIRED', status: 400 });
 	const headers: Record<string, string> = { 'content-type': 'application/json' };
 	const token = String(env.ORBITFS_LICENSE_API_TOKEN || '').trim();
@@ -171,7 +171,7 @@ async function callProvider(licenseKey: string, installationId: string, activate
 	const response = await fetch(validateUrl(), {
 		method: 'POST',
 		headers,
-		body: JSON.stringify({ licenseKey, installationId, components: [PANEL_COMPONENT, 'orbitfs_mcp'], activate }),
+		body: JSON.stringify({ licenseKey, installationId, components, activate }),
 		signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
 	});
 	const body = await response.json().catch(() => ({}));
@@ -264,6 +264,18 @@ export async function activatePanelLicense(licenseKey: string) {
 		throw Object.assign(new Error('Licence does not allow the OrbitFS Base System on this installation'), { code: component.reason || 'LICENSE_COMPONENT_DENIED', status: 403 });
 	}
 	return await persistEntitlement(cleanKey, result.payload, result.entitlement, 'activation');
+}
+
+export async function activateLicenseComponent(componentId: string) {
+	const row = await getRow();
+	const licenseKey = String(row?.license_key || env.ORBITFS_LICENSE_KEY || '').trim();
+	const installationId = await ensureInstallationIdentity();
+	if (!licenseKey) throw Object.assign(new Error('Licence key is not activated'), { code: 'LICENSE_KEY_REQUIRED', status: 400 });
+	const result = await callProvider(licenseKey, installationId, true, [PANEL_COMPONENT, componentId]);
+	const component = result.payload.components?.[componentId] || {};
+	if (!componentLicensed(component)) throw Object.assign(new Error(`Licence component ${componentId} requires activation or is not allowed`), { code: component.reason || 'LICENSE_COMPONENT_DENIED', status: 403 });
+	const summary = await persistEntitlement(licenseKey, result.payload, result.entitlement, `component_activation:${componentId}`);
+	return { summary, component: summary.components?.[componentId] || component };
 }
 
 export async function assertPanelLicensed() {
