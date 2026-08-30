@@ -11,9 +11,9 @@ export default defineConfig({
 				runes: ({ filename }) => filename.split(/[/\\]/).includes('node_modules') ? undefined : true
 			},
 			adapter: adapter(),
-			csrf: {
-				trustedOrigins: ['https://chatgpt.com', 'https://chat.openai.com', 'https://connectors.api.openai.org']
-			}
+			// OAuth token exchange is a server-to-server form POST. Route-specific
+			// CSRF protection is enforced in hooks.server.ts for normal web forms.
+			csrf: { trustedOrigins: ['*'] }
 		})
 	]
 });
