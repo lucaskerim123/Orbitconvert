@@ -53,8 +53,8 @@
     finally { loading = false; }
   }
   async function load() {
-    const data = await api.get<{ workspaces: Workspace[] }>('/workspaces');
-    workspaces = data.workspaces.filter((ws) => ws.permission === 'owner' || !!ws.management_permissions?.manage_mcp_startup);
+    const data = await api.get<{ workspaces: Workspace[]; canManageGlobal?: boolean }>('/workspaces');
+    workspaces = data.canManageGlobal === true ? data.workspaces : data.workspaces.filter((ws) => ws.permission === 'owner' || !!ws.management_permissions?.manage_mcp_startup);
     const requestedWorkspace = page.url.searchParams.get('workspaceId') || '';
     workspaceId = workspaces.some((ws) => ws.id === requestedWorkspace) ? requestedWorkspace : (workspaces[0]?.id || '');
     const requestedPath = (page.url.searchParams.get('addPath') || '').replace(/^\/+|\/+$/g, '');

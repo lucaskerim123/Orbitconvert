@@ -7,92 +7,57 @@ import { getSupabaseAdmin } from '$lib/server/supabase';
 import { visibleWorkspaces } from '$lib/server/workspaces';
 import { requireMcpWorkspace, listMcpProjects, listContextBundles, getContextBundle, getStartup } from '$lib/server/mcp-workspace-state';
 import type { OrbitUser } from '$lib/server/auth';
+import { workspaceUiState, activeContext, clearActiveContext, listWorkspaceEntries, readFile, loadFile, loadFolder, removeContextFile, listProfiles, loadProfile, loadBundle, unloadBundle, loadDefaults, runStartup, writeFile, makeFolder, moveWorkspaceEntry, deleteWorkspaceEntry, uploadFromUrl, type RuntimeIdentity } from './cloud-runtime';
 
-const SERVER_NAME = 'orbitfs-mcp';
-const SERVER_VERSION = '0.4.0';
+const SERVER_NAME='orbitfs-mcp';
+const SERVER_VERSION='0.5.0';
+const textResult=(text:string,structuredContent:any,meta?:any)=>({content:[{type:'text' as const,text}],structuredContent,...(meta?{_meta:meta}:{})});
 
-async function oauthUser(extra:any, fallbackAuthInfo?:AuthInfo): Promise<OrbitUser> {
-	const authInfo=extra?.authInfo || fallbackAuthInfo;
-	const id=String(authInfo?.extra?.userId || '');
-	if(!id) throw new Error('Authenticated OrbitFS user is required');
-	const db=getSupabaseAdmin();
-	const {data,error}=await db.from('orbitfs_users').select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason').eq('id',id).maybeSingle();
-	if(error) throw error;
-	if(!data || data.status!=='active') throw new Error('OrbitFS user is unavailable');
-	return data as OrbitUser;
+async function oauthUser(extra:any,fallback?:AuthInfo):Promise<OrbitUser>{const authInfo=extra?.authInfo||fallback;const id=String(authInfo?.extra?.userId||'');if(!id)throw new Error('Authenticated OrbitFS user is required');const db=getSupabaseAdmin();const {data,error}=await db.from('orbitfs_users').select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason').eq('id',id).maybeSingle();if(error)throw error;if(!data||data.status!=='active')throw new Error('OrbitFS user is unavailable');return data as OrbitUser;}
+function clientId(extra:any,fallback?:AuthInfo){return String(extra?.authInfo?.clientId||fallback?.clientId||'chatgpt');}
+async function identity(extra:any,fallback?:AuthInfo):Promise<RuntimeIdentity>{return {user:await oauthUser(extra,fallback),clientId:clientId(extra,fallback),contextKey:'default'};}
+const ro={readOnlyHint:true,destructiveHint:false,idempotentHint:true,openWorldHint:false};
+const mut={readOnlyHint:false,destructiveHint:false,idempotentHint:false,openWorldHint:false};
+const destruct={readOnlyHint:false,destructiveHint:true,idempotentHint:true,openWorldHint:false};
+
+export function createOrbitMcpServer(authInfo?:AuthInfo){
+ const server=new McpServer({name:SERVER_NAME,version:SERVER_VERSION});
+ server.registerTool('orbitfs_status',{title:'Get OrbitFS MCP status',description:'Verify the authenticated OrbitFS MCP connection and current user.',inputSchema:{},annotations:ro},async(_a,e)=>{const u=await oauthUser(e,authInfo);return textResult(`OrbitFS MCP is online and authenticated as ${u.display_name||u.username}.`,{ok:true,status:'Online',user:u.display_name||u.username,server:SERVER_NAME,version:SERVER_VERSION});});
+ server.registerTool('orbitfs_list_workspaces',{title:'List OrbitFS workspaces',description:'List OrbitFS workspaces the authenticated user can access.',inputSchema:{},annotations:ro},async(_a,e)=>{const u=await oauthUser(e,authInfo),workspaces=await visibleWorkspaces(u);return textResult(`Found ${workspaces.length} accessible OrbitFS workspace(s).`,{workspaces});});
+ server.registerTool('orbitfs_list_projects',{title:'List MCP projects',description:'List MCP projects for an accessible OrbitFS workspace.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const u=await oauthUser(e,authInfo);await requireMcpWorkspace(u,workspaceId);const projects=await listMcpProjects(workspaceId);return textResult(`Found ${projects.length} MCP project(s).`,{workspaceId,projects});});
+ server.registerTool('orbitfs_list_context_bundles',{title:'List context bundles',description:'List MCP context bundles for an accessible OrbitFS workspace.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const u=await oauthUser(e,authInfo);await requireMcpWorkspace(u,workspaceId);const bundles=await listContextBundles(workspaceId);return textResult(`Found ${bundles.length} context bundle(s).`,{workspaceId,bundles});});
+ server.registerTool('orbitfs_get_context_bundle',{title:'Get context bundle',description:'Read one MCP context bundle and its entries/dependencies.',inputSchema:{workspaceId:z.string(),bundleId:z.string()},annotations:ro},async({workspaceId,bundleId},e)=>{const u=await oauthUser(e,authInfo);await requireMcpWorkspace(u,workspaceId);const bundle=await getContextBundle(workspaceId,bundleId);return textResult(`Loaded context bundle ${bundle.name||bundleId}.`,{workspaceId,bundle});});
+ server.registerTool('orbitfs_get_startup',{title:'Get workspace startup',description:'Read the MCP startup configuration for an accessible OrbitFS workspace.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const u=await oauthUser(e,authInfo);await requireMcpWorkspace(u,workspaceId);return textResult('Loaded OrbitFS MCP startup configuration.',{workspaceId,startup:await getStartup(workspaceId)});});
+ const uiTool=async(args:any,e:any)=>{const i=await identity(e,authInfo);const state=await workspaceUiState(i,args.workspaceId||'default',args.strength,args.projectId||null);return textResult(`OrbitFS workspace ${state.dashboard.workspace.name} is ready.`,state,{orbitfsUiState:state});};
+ server.registerTool('orbitfs_ui_state',{title:'OrbitFS UI state',description:'Internal app state for the OrbitFS ChatGPT UI.',inputSchema:{workspaceId:z.string().optional(),strength:z.string().optional(),projectId:z.string().optional()},annotations:ro},uiTool);
+ server.registerTool('refresh_ui',{title:'Refresh OrbitFS UI',description:'Refresh OrbitFS workspace UI state.',inputSchema:{workspaceId:z.string().optional(),strength:z.string().optional(),projectId:z.string().optional()},annotations:ro},uiTool);
+ server.registerTool('get_active_context',{title:'Get active OrbitFS context',description:'Return active context for a workspace.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const i=await identity(e,authInfo);await requireMcpWorkspace(i.user,workspaceId);const receipt=await activeContext(i,workspaceId);return textResult(receipt?`${receipt.files?.length||0} active context item(s).`:'No active context.',{workspaceId,activeContext:receipt,activeFiles:receipt?.files||[],receipt},{orbitfsUiState:{workspaceId,activeContext:receipt,activeFiles:receipt?.files||[]}});});
+ server.registerTool('list_context_bundles',{title:'List context bundles',description:'List context bundles available in a workspace.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const i=await identity(e,authInfo);await requireMcpWorkspace(i.user,workspaceId);const bundles=await listContextBundles(workspaceId);return textResult(`${bundles.length} context bundle(s) available.`,{workspaceId,bundles},{orbitfsUiState:{workspaceId,bundles}});});
+ server.registerTool('list_profiles',{title:'List OrbitFS profiles',description:'List accessible workspace profiles.',inputSchema:{workspaceId:z.string()},annotations:ro},async({workspaceId},e)=>{const i=await identity(e,authInfo);const p=await listProfiles(i,workspaceId);const state={workspaceId,profiles:p.profiles||[],profileBundles:p.profileBundles||[],settings:p.settings||{},permissions:p.permissions||{},slots:{master:null,additional:null}};return textResult(`${state.profiles.length} profile(s) available.`,state,{orbitfsUiState:state});});
+ server.registerTool('list_workspace_entries',{title:'Browse OrbitFS workspace',description:'Browse files and folders in an OrbitFS workspace.',inputSchema:{workspaceId:z.string(),path:z.string().optional()},annotations:ro},async({workspaceId,path=''},e)=>{const i=await identity(e,authInfo);const entries=await listWorkspaceEntries(i,workspaceId,path);return textResult(`${entries.length} item(s).`,{workspaceId,path,entries},{orbitfsUiState:{workspaceId,path,entries}});});
+ server.registerTool('read_file',{title:'Read OrbitFS file',description:'Read a permitted OrbitFS workspace file.',inputSchema:{workspaceId:z.string(),path:z.string(),output:z.enum(['auto','text','base64']).optional(),maxCharacters:z.number().optional(),maxBytes:z.number().optional()},annotations:ro},async({workspaceId,path,output='auto',maxCharacters=20000,maxBytes=5242880},e)=>{const i=await identity(e,authInfo);const data=await readFile(i,workspaceId,path,output,maxBytes,maxCharacters);return textResult(data.encoding==='text'?data.document.content:`Read ${data.metadata.bytes} bytes from ${path}.`,data);});
+ server.registerTool('load_file',{title:'Load OrbitFS file',description:'Load a permitted workspace file into active context.',inputSchema:{workspaceId:z.string(),path:z.string(),maxCharacters:z.number().optional()},annotations:mut},async({workspaceId,path},e)=>{const i=await identity(e,authInfo);const r=await loadFile(i,workspaceId,path);return textResult(`Loaded ${path} into OrbitFS context.`,{workspaceId,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt.files,loadedCount:1});});
+ server.registerTool('load_folder',{title:'Load OrbitFS folder',description:'Load readable files from a workspace folder into active context.',inputSchema:{workspaceId:z.string(),path:z.string(),maxFiles:z.number().optional(),maxCharacters:z.number().optional()},annotations:mut},async({workspaceId,path,maxFiles=50,maxCharacters=500000},e)=>{const i=await identity(e,authInfo);const r=await loadFolder(i,workspaceId,path,maxFiles,maxCharacters);return textResult(`Loaded ${r.loaded.length} file(s) from ${path}.`,{workspaceId,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt?.files||[],loadedCount:r.loaded.length});});
+ server.registerTool('remove_context_file',{title:'Remove context item',description:'Remove one loaded file or profile from active context.',inputSchema:{workspaceId:z.string(),path:z.string()},annotations:destruct},async({workspaceId,path},e)=>{const i=await identity(e,authInfo);const receipt=await removeContextFile(i,workspaceId,path);return textResult(`Removed ${path} from active context.`,{workspaceId,receipt,activeContext:receipt,activeFiles:receipt.files});});
+ server.registerTool('clear_context',{title:'Clear OrbitFS context',description:'Clear active context for a workspace.',inputSchema:{workspaceId:z.string()},annotations:destruct},async({workspaceId},e)=>{const i=await identity(e,authInfo);await clearActiveContext(i,workspaceId);return textResult('OrbitFS context cleared.',{workspaceId,activeContext:null,activeFiles:[]});});
+ server.registerTool('reload_changed_context',{title:'Reload changed context',description:'Refresh active context state from cloud storage.',inputSchema:{workspaceId:z.string()},annotations:mut},async({workspaceId},e)=>{const i=await identity(e,authInfo);const receipt=await activeContext(i,workspaceId);return textResult('OrbitFS context refreshed.',{workspaceId,receipt,activeContext:receipt,activeFiles:receipt?.files||[],changeStatus:{outdated:false,changedFiles:[]}});});
+ server.registerTool('load_profile',{title:'Load OrbitFS profile',description:'Load an accessible profile into active context.',inputSchema:{workspaceId:z.string(),profileId:z.string(),detail:z.enum(['summary','standard','full']).optional()},annotations:mut},async({workspaceId,profileId,detail='standard'},e)=>{const i=await identity(e,authInfo);const r=await loadProfile(i,workspaceId,profileId,detail);return textResult(`Loaded profile ${r.profile.name}.`,{workspaceId,profile:r.profile,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt.files});});
+ server.registerTool('load_context_bundle',{title:'Load context bundle',description:'Load a reusable context bundle into active context.',inputSchema:{workspaceId:z.string(),bundleId:z.string()},annotations:mut},async({workspaceId,bundleId},e)=>{const i=await identity(e,authInfo);const r=await loadBundle(i,workspaceId,bundleId);return textResult(`Loaded context bundle ${r.bundle.name}.`,{workspaceId,bundleId,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt.files});});
+ server.registerTool('unload_context_bundle',{title:'Unload context bundle',description:'Unload a context bundle from active context.',inputSchema:{workspaceId:z.string(),bundleId:z.string()},annotations:destruct},async({workspaceId,bundleId},e)=>{const i=await identity(e,authInfo);const receipt=await unloadBundle(i,workspaceId,bundleId);return textResult('Context bundle unloaded.',{workspaceId,bundleId,receipt,activeContext:receipt,activeFiles:receipt.files});});
+ server.registerTool('load_defaults',{title:'Load OrbitFS defaults',description:'Load the configured default workspace context.',inputSchema:{workspaceId:z.string(),projectId:z.string().optional()},annotations:mut},async({workspaceId,projectId},e)=>{const i=await identity(e,authInfo);const r=await loadDefaults(i,workspaceId,projectId||null);return textResult('OrbitFS defaults loaded.',{workspaceId,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt?.files||[]});});
+ server.registerTool('run_startup',{title:'Run OrbitFS startup',description:'Run the selected OrbitFS startup preset and load its configured context.',inputSchema:{workspaceId:z.string(),strength:z.string(),projectId:z.string().optional()},annotations:mut},async({workspaceId,strength,projectId},e)=>{const i=await identity(e,authInfo);const r=await runStartup(i,workspaceId,strength,projectId||null);return textResult(`OrbitFS ${strength} startup loaded.`,{workspaceId,receipt:r.receipt,activeContext:r.receipt,activeFiles:r.receipt.files});});
+ server.registerTool('create_folder',{title:'Create OrbitFS folder',description:'Create a workspace folder.',inputSchema:{workspaceId:z.string(),path:z.string(),createParents:z.boolean().optional()},annotations:mut},async({workspaceId,path},e)=>{const i=await identity(e,authInfo);const folder=await makeFolder(i,workspaceId,path);return textResult(`Created folder ${path}.`,{workspaceId,path,folder});});
+ server.registerTool('move_entry',{title:'Move OrbitFS entry',description:'Move or rename a workspace file/folder.',inputSchema:{workspaceId:z.string(),sourcePath:z.string(),destinationPath:z.string()},annotations:mut},async({workspaceId,sourcePath,destinationPath},e)=>{const i=await identity(e,authInfo);return textResult(`Moved ${sourcePath} to ${destinationPath}.`,await moveWorkspaceEntry(i,workspaceId,sourcePath,destinationPath));});
+ server.registerTool('delete_entry',{title:'Delete OrbitFS entry',description:'Delete a permitted workspace file or folder.',inputSchema:{workspaceId:z.string(),path:z.string(),recursive:z.boolean().optional(),confirmSystem:z.boolean().optional()},annotations:destruct},async({workspaceId,path},e)=>{const i=await identity(e,authInfo);return textResult(`Deleted ${path}.`,await deleteWorkspaceEntry(i,workspaceId,path));});
+ server.registerTool('write_file',{title:'Write OrbitFS file',description:'Create or replace a permitted workspace file.',inputSchema:{workspaceId:z.string(),path:z.string(),data:z.string(),encoding:z.enum(['text','base64']).optional()},annotations:mut},async({workspaceId,path,data,encoding='text'},e)=>{const i=await identity(e,authInfo);const result=await writeFile(i,workspaceId,path,data,encoding);return textResult(`Saved ${path}.`,result);});
+ server.registerTool('upload_chatgpt_file',{title:'Upload ChatGPT file to OrbitFS',description:'Import a ChatGPT-provided file into an OrbitFS workspace.',inputSchema:{workspaceId:z.string(),directory:z.string().optional(),file:z.any()},annotations:mut},async({workspaceId,directory='',file},e)=>{const i=await identity(e,authInfo);const result=await uploadFromUrl(i,workspaceId,directory,file);return textResult(`Uploaded ${result.path}.`,result);});
+
+ const appHandler=async(args:any,e:any)=>{const i=await identity(e,authInfo);const state=await workspaceUiState(i,args.workspaceId||'default');return textResult(`OrbitFS ${state.dashboard.workspace.name} is open.`,state,{orbitfsUiState:state});};
+ const appDef={title:'OrbitFS',description:'Open the full OrbitFS workspace manager inside ChatGPT.',inputSchema:{workspaceId:z.string().optional()},annotations:ro,_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}};
+ registerAppTool(server,'orbitfs',appDef,appHandler);
+ registerAppTool(server,'orbitfs_dashboard',{...appDef,title:'Open OrbitFS'},appHandler);
+ registerAppResource(server,'OrbitFS',ORBITFS_WIDGET_URI,{description:'Full OrbitFS ChatGPT workspace interface.'},async()=>({contents:[{uri:ORBITFS_WIDGET_URI,mimeType:RESOURCE_MIME_TYPE,text:ORBITFS_WIDGET_HTML,_meta:{ui:{prefersBorder:true,csp:{connectDomains:['https://orbitfsproject.vercel.app','https://orbitfsmcp.vercel.app'],resourceDomains:[]}},'openai/widgetDescription':'OrbitFS workspace, startup, context, profile and file manager.'}}]}));
+ return server;
 }
-
-const textResult=(text:string,structuredContent:any)=>({content:[{type:'text' as const,text}],structuredContent});
-
-export function createOrbitMcpServer(authInfo?:AuthInfo) {
-	const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
-	server.registerTool('orbitfs_status', {
-		title:'Get OrbitFS MCP status', description:'Verify the authenticated OrbitFS MCP connection and current user.',
-		inputSchema:{}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async (_args, extra) => {
-		const user=await oauthUser(extra,authInfo);
-		return textResult(`OrbitFS MCP is online and authenticated as ${user.display_name||user.username}.`,{ok:true,status:'Online',user:user.display_name||user.username,server:SERVER_NAME,version:SERVER_VERSION});
-	});
-
-	server.registerTool('orbitfs_list_workspaces', {
-		title:'List OrbitFS workspaces', description:'List OrbitFS workspaces the authenticated user can access.',
-		inputSchema:{}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async (_args,extra)=>{
-		const user=await oauthUser(extra,authInfo); const workspaces=await visibleWorkspaces(user);
-		return textResult(`Found ${workspaces.length} accessible OrbitFS workspace(s).`,{workspaces});
-	});
-
-	server.registerTool('orbitfs_list_projects', {
-		title:'List MCP projects', description:'List MCP projects for an accessible OrbitFS workspace.',
-		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const projects=await listMcpProjects(workspaceId);
-		return textResult(`Found ${projects.length} MCP project(s).`,{workspaceId,projects});
-	});
-	server.registerTool('orbitfs_list_context_bundles', {
-		title:'List context bundles', description:'List MCP context bundles for an accessible OrbitFS workspace.',
-		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const bundles=await listContextBundles(workspaceId);
-		return textResult(`Found ${bundles.length} context bundle(s).`,{workspaceId,bundles});
-	});
-
-	server.registerTool('orbitfs_get_context_bundle', {
-		title:'Get context bundle', description:'Read one MCP context bundle and its entries/dependencies.',
-		inputSchema:{workspaceId:z.string().min(1),bundleId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async ({workspaceId,bundleId},extra)=>{
-		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const bundle=await getContextBundle(workspaceId,bundleId);
-		return textResult(`Loaded context bundle ${bundle.name||bundleId}.`,{workspaceId,bundle});
-	});
-
-	server.registerTool('orbitfs_get_startup', {
-		title:'Get workspace startup', description:'Read the MCP startup configuration for an accessible OrbitFS workspace.',
-		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
-	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const startup=await getStartup(workspaceId);
-		return textResult('Loaded OrbitFS MCP startup configuration.',{workspaceId,startup});
-	});
-	registerAppTool(server,'orbitfs_dashboard',{
-		title:'Open OrbitFS', description:'Open an interactive authenticated OrbitFS overview inside ChatGPT.', inputSchema:{},
-		annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
-		_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}
-	},async (_args,extra)=>{
-		const user=await oauthUser(extra,authInfo);
-		const workspaces=await visibleWorkspaces(user);
-		return textResult(`Opened OrbitFS with ${workspaces.length} accessible workspace(s).`,{status:'Online',user:user.display_name||user.username,userId:user.id,workspaceCount:workspaces.length,workspaces,projectUrl:'https://orbitfsproject.vercel.app'});
-	});
-
-	registerAppResource(server,'OrbitFS Dashboard',ORBITFS_WIDGET_URI,{description:'Authenticated OrbitFS dashboard for ChatGPT.'},async()=>({
-		contents:[{uri:ORBITFS_WIDGET_URI,mimeType:RESOURCE_MIME_TYPE,text:ORBITFS_WIDGET_HTML,_meta:{ui:{prefersBorder:true,csp:{connectDomains:['https://orbitfsproject.vercel.app','https://orbitfsmcp.vercel.app'],resourceDomains:[]}},'openai/widgetDescription':'Interactive authenticated OrbitFS overview.'}}]
-	}));
-	return server;
-}
-
-const mcpHttpHandler=createMcpHandler((ctx)=>createOrbitMcpServer(ctx.authInfo as AuthInfo | undefined),{
-	legacy:'stateless',
-	onerror:(error)=>console.error('[orbitfs-mcp]',error instanceof Error?error.message:String(error))
-});
-
-export async function handleMcpAddonRequest(request:Request, authInfo?:AuthInfo):Promise<Response> {
-	return mcpHttpHandler.fetch(request,{authInfo});
-}
+const mcpHttpHandler=createMcpHandler((ctx)=>createOrbitMcpServer(ctx.authInfo as AuthInfo|undefined),{legacy:'stateless',onerror:(error)=>console.error('[orbitfs-mcp]',error instanceof Error?error.message:String(error))});
+export async function handleMcpAddonRequest(request:Request,authInfo?:AuthInfo):Promise<Response>{return mcpHttpHandler.fetch(request,{authInfo});}
