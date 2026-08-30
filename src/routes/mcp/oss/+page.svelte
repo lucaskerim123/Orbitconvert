@@ -23,6 +23,7 @@
 	});
 
 	let workspaces = $state<Workspace[]>([]);
+	let canManageGlobal = $state(false);
 	let workspaceId = $state('');
 	let projects = $state<Project[]>([]);
 	let defaultItems = $state<Item[]>([]);
@@ -61,8 +62,8 @@
 	let savedMessage = $state('');
 	const presetLabel = (key: PresetKey) => presetMetadata[key]?.displayName || presetMetadata[key]?.defaultDisplayName || (key === 'custom1' ? 'Custom 1' : key === 'custom2' ? 'Custom 2' : key[0].toUpperCase() + key.slice(1));
 	const selectedWorkspace = () => workspaces.find((workspace) => workspace.id === workspaceId);
-	const canManageStartup = () => selectedWorkspace()?.permission === 'owner' || !!selectedWorkspace()?.management_permissions?.manage_mcp_startup;
-	const canManagePresetNames = () => selectedWorkspace()?.permission === 'owner' || !!selectedWorkspace()?.management_permissions?.manage_mcp_preset_names;
+	const canManageStartup = () => canManageGlobal || selectedWorkspace()?.permission === 'owner' || !!selectedWorkspace()?.management_permissions?.manage_mcp_startup;
+	const canManagePresetNames = () => canManageGlobal || selectedWorkspace()?.permission === 'owner' || !!selectedWorkspace()?.management_permissions?.manage_mcp_preset_names;
 	const normalizeItems = (items: Item[] = []) => items.map((item) => ({
 		type: item.item_type || item.type,
 		path: item.item_path || item.path,
@@ -114,7 +115,8 @@
 	}
 	async function load() {
 		const data = await api.get<{ workspaces: Workspace[]; canManageGlobal: boolean }>('/workspaces');
-		workspaces = data.workspaces.filter((workspace) =>
+		canManageGlobal = data.canManageGlobal === true;
+		workspaces = canManageGlobal ? data.workspaces : data.workspaces.filter((workspace) =>
 			workspace.permission === 'owner' || !!workspace.management_permissions?.manage_mcp_startup || !!workspace.management_permissions?.manage_mcp_preset_names
 		);
 		const requestedWorkspace = page.url.searchParams.get('workspaceId') || '';
