@@ -41,6 +41,7 @@
 		"@lucide/svelte": "^1.25.0",
 		"@modelcontextprotocol/ext-apps": "^1.7.5",
 		"@modelcontextprotocol/sdk": "^1.30.0",
+		"@modelcontextprotocol/server": "^2.0.0",
 		"@supabase/supabase-js": "^2.112.4",
 		"bits-ui": "^2.18.1",
 		"clsx": "^2.1.1",

@@ -1,5 +1,4 @@
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import { McpServer, createMcpHandler } from '@modelcontextprotocol/server';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from '@modelcontextprotocol/ext-apps/server';
 import { z } from 'zod';
@@ -10,7 +9,7 @@ import { requireMcpWorkspace, listMcpProjects, listContextBundles, getContextBun
 import type { OrbitUser } from '$lib/server/auth';
 
 const SERVER_NAME = 'orbitfs-mcp';
-const SERVER_VERSION = '0.3.0';
+const SERVER_VERSION = '0.4.0';
 
 async function oauthUser(extra:any): Promise<OrbitUser> {
 	const id=String(extra.authInfo?.extra?.userId || '');
@@ -78,7 +77,8 @@ export function createOrbitMcpServer() {
 		_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}
 	},async (_args,extra)=>{
 		const user=await oauthUser(extra);
-		return textResult('Opened the authenticated OrbitFS MCP dashboard.',{status:'Online',user:user.display_name||user.username,projectUrl:'https://orbitfsproject.vercel.app'});
+		const workspaces=await visibleWorkspaces(user);
+		return textResult(`Opened OrbitFS with ${workspaces.length} accessible workspace(s).`,{status:'Online',user:user.display_name||user.username,userId:user.id,workspaceCount:workspaces.length,workspaces,projectUrl:'https://orbitfsproject.vercel.app'});
 	});
 
 	registerAppResource(server,'OrbitFS Dashboard',ORBITFS_WIDGET_URI,{description:'Authenticated OrbitFS dashboard for ChatGPT.'},async()=>({
@@ -87,10 +87,11 @@ export function createOrbitMcpServer() {
 	return server;
 }
 
+const mcpHttpHandler=createMcpHandler(()=>createOrbitMcpServer(),{
+	legacy:'stateless',
+	onerror:(error)=>console.error('[orbitfs-mcp]',error instanceof Error?error.message:String(error))
+});
+
 export async function handleMcpAddonRequest(request:Request, authInfo?:AuthInfo):Promise<Response> {
-	const server=createOrbitMcpServer();
-	const transport=new WebStandardStreamableHTTPServerTransport({sessionIdGenerator:undefined,enableJsonResponse:true});
-	await server.connect(transport);
-	try { return await transport.handleRequest(request,{authInfo}); }
-	finally { await transport.close(); }
+	return mcpHttpHandler.fetch(request,{authInfo});
 }
