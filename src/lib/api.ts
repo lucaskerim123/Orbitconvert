@@ -69,13 +69,25 @@ export const api = {
 		xhr.send(file);
 	}),
 	uploadChunked: async (path: string, file: File, onProgress?: (pct: number) => void) => {
+		if (file.size <= 3 * 1024 * 1024) {
+			const directPath = path.replace(/^\/upload-chunked/, '/upload');
+			await api.upload(directPath, file, onProgress);
+			onProgress?.(100);
+			return;
+		}
 		const init = await request<any>(path, { method:'POST', body:JSON.stringify({ action:'init', size:file.size, mimeType:file.type || 'application/octet-stream' }) });
 		await new Promise<void>((resolve,reject) => {
 			const xhr=new XMLHttpRequest(); xhr.open('PUT',init.signedUrl); const form=new FormData();
 			form.append('cacheControl','3600'); form.append('',file);
+			xhr.setRequestHeader('x-upsert','true');
 			xhr.upload.onprogress=(e)=>{ if(e.lengthComputable) onProgress?.(Math.min(99,Math.round((e.loaded/e.total)*100))); };
-			xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve():reject(new ApiError(xhr.responseText||'Storage upload failed',xhr.status));
-			xhr.onerror=()=>reject(new ApiError('Storage upload failed',0)); xhr.send(form);
+			xhr.onload=()=>{
+				if(xhr.status>=200&&xhr.status<300)return resolve();
+				let message=xhr.responseText||'Storage upload failed';
+				try{const body=JSON.parse(xhr.responseText||'{}');message=body?.message||body?.error||message;}catch{}
+				reject(new ApiError(message,xhr.status));
+			};
+			xhr.onerror=()=>reject(new ApiError('Storage upload request failed',0)); xhr.send(form);
 		});
 		await request<any>(path,{method:'POST',body:JSON.stringify({action:'finalize',size:file.size,mimeType:file.type||'application/octet-stream',storagePath:init.storagePath})});
 		onProgress?.(100);

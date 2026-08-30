@@ -336,6 +336,13 @@ export async function POST({ params, request, cookies, url }) {
 			}
 			if (action === 'finalize') {
 				if (String(body.storagePath || '') !== objectPath) throw Object.assign(new Error('Upload path mismatch'), { status:400 });
+				const objectDir = dirname(objectPath);
+				const objectName = basename(objectPath);
+				const uploaded = await supabase.storage.from(STORAGE_BUCKET).list(objectDir, { search:objectName, limit:100 });
+				if (uploaded.error) throw uploaded.error;
+				if (!(uploaded.data || []).some((item:any) => item.name === objectName)) {
+					throw Object.assign(new Error('Storage upload did not complete. Retry the file upload.'), { status:409, code:'UPLOAD_NOT_STORED' });
+				}
 				const existing = await findEntry(workspace.id, target);
 				const payload = { workspace_id:workspace.id, name:basename(target), path:target, kind:'file', mime_type:String(body.mimeType || 'application/octet-stream'), content_text:'', storage_path:objectPath, size_bytes:Math.max(0,Number(body.size)||0), created_by:existing?.created_by ?? user.id, deleted_at:null, updated_at:new Date().toISOString() };
 				const result = existing ? await supabase.from('orbitfs_files').update(payload).eq('id',existing.id).select('*').single() : await supabase.from('orbitfs_files').insert(payload).select('*').single();
