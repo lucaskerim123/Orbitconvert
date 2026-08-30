@@ -11,8 +11,9 @@ import type { OrbitUser } from '$lib/server/auth';
 const SERVER_NAME = 'orbitfs-mcp';
 const SERVER_VERSION = '0.4.0';
 
-async function oauthUser(extra:any): Promise<OrbitUser> {
-	const id=String(extra.authInfo?.extra?.userId || '');
+async function oauthUser(extra:any, fallbackAuthInfo?:AuthInfo): Promise<OrbitUser> {
+	const authInfo=extra?.authInfo || fallbackAuthInfo;
+	const id=String(authInfo?.extra?.userId || '');
 	if(!id) throw new Error('Authenticated OrbitFS user is required');
 	const db=getSupabaseAdmin();
 	const {data,error}=await db.from('orbitfs_users').select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason').eq('id',id).maybeSingle();
@@ -23,13 +24,13 @@ async function oauthUser(extra:any): Promise<OrbitUser> {
 
 const textResult=(text:string,structuredContent:any)=>({content:[{type:'text' as const,text}],structuredContent});
 
-export function createOrbitMcpServer() {
+export function createOrbitMcpServer(authInfo?:AuthInfo) {
 	const server = new McpServer({ name: SERVER_NAME, version: SERVER_VERSION });
 	server.registerTool('orbitfs_status', {
 		title:'Get OrbitFS MCP status', description:'Verify the authenticated OrbitFS MCP connection and current user.',
 		inputSchema:{}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async (_args, extra) => {
-		const user=await oauthUser(extra);
+		const user=await oauthUser(extra,authInfo);
 		return textResult(`OrbitFS MCP is online and authenticated as ${user.display_name||user.username}.`,{ok:true,status:'Online',user:user.display_name||user.username,server:SERVER_NAME,version:SERVER_VERSION});
 	});
 
@@ -37,7 +38,7 @@ export function createOrbitMcpServer() {
 		title:'List OrbitFS workspaces', description:'List OrbitFS workspaces the authenticated user can access.',
 		inputSchema:{}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async (_args,extra)=>{
-		const user=await oauthUser(extra); const workspaces=await visibleWorkspaces(user);
+		const user=await oauthUser(extra,authInfo); const workspaces=await visibleWorkspaces(user);
 		return textResult(`Found ${workspaces.length} accessible OrbitFS workspace(s).`,{workspaces});
 	});
 
@@ -45,14 +46,14 @@ export function createOrbitMcpServer() {
 		title:'List MCP projects', description:'List MCP projects for an accessible OrbitFS workspace.',
 		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra); await requireMcpWorkspace(user,workspaceId); const projects=await listMcpProjects(workspaceId);
+		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const projects=await listMcpProjects(workspaceId);
 		return textResult(`Found ${projects.length} MCP project(s).`,{workspaceId,projects});
 	});
 	server.registerTool('orbitfs_list_context_bundles', {
 		title:'List context bundles', description:'List MCP context bundles for an accessible OrbitFS workspace.',
 		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra); await requireMcpWorkspace(user,workspaceId); const bundles=await listContextBundles(workspaceId);
+		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const bundles=await listContextBundles(workspaceId);
 		return textResult(`Found ${bundles.length} context bundle(s).`,{workspaceId,bundles});
 	});
 
@@ -60,7 +61,7 @@ export function createOrbitMcpServer() {
 		title:'Get context bundle', description:'Read one MCP context bundle and its entries/dependencies.',
 		inputSchema:{workspaceId:z.string().min(1),bundleId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async ({workspaceId,bundleId},extra)=>{
-		const user=await oauthUser(extra); await requireMcpWorkspace(user,workspaceId); const bundle=await getContextBundle(workspaceId,bundleId);
+		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const bundle=await getContextBundle(workspaceId,bundleId);
 		return textResult(`Loaded context bundle ${bundle.name||bundleId}.`,{workspaceId,bundle});
 	});
 
@@ -68,7 +69,7 @@ export function createOrbitMcpServer() {
 		title:'Get workspace startup', description:'Read the MCP startup configuration for an accessible OrbitFS workspace.',
 		inputSchema:{workspaceId:z.string().min(1)}, annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false}
 	}, async ({workspaceId},extra)=>{
-		const user=await oauthUser(extra); await requireMcpWorkspace(user,workspaceId); const startup=await getStartup(workspaceId);
+		const user=await oauthUser(extra,authInfo); await requireMcpWorkspace(user,workspaceId); const startup=await getStartup(workspaceId);
 		return textResult('Loaded OrbitFS MCP startup configuration.',{workspaceId,startup});
 	});
 	registerAppTool(server,'orbitfs_dashboard',{
@@ -76,7 +77,7 @@ export function createOrbitMcpServer() {
 		annotations:{readOnlyHint:true,destructiveHint:false,openWorldHint:false},
 		_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}
 	},async (_args,extra)=>{
-		const user=await oauthUser(extra);
+		const user=await oauthUser(extra,authInfo);
 		const workspaces=await visibleWorkspaces(user);
 		return textResult(`Opened OrbitFS with ${workspaces.length} accessible workspace(s).`,{status:'Online',user:user.display_name||user.username,userId:user.id,workspaceCount:workspaces.length,workspaces,projectUrl:'https://orbitfsproject.vercel.app'});
 	});
@@ -87,7 +88,7 @@ export function createOrbitMcpServer() {
 	return server;
 }
 
-const mcpHttpHandler=createMcpHandler(()=>createOrbitMcpServer(),{
+const mcpHttpHandler=createMcpHandler((ctx)=>createOrbitMcpServer(ctx.authInfo as AuthInfo | undefined),{
 	legacy:'stateless',
 	onerror:(error)=>console.error('[orbitfs-mcp]',error instanceof Error?error.message:String(error))
 });
