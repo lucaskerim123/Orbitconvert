@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { createSession, verifyPassword } from '$lib/server/auth';
+import { authenticateOrbitCredentials, createSession } from '$lib/server/auth';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { writeAudit } from '$lib/server/audit';
 
@@ -9,12 +9,10 @@ export async function POST({ request, cookies, url, getClientAddress }) {
 	const credential = String(body.password ?? body.pin ?? '');
 	if (!identity || !credential) return json({ error:'Username/email and password or PIN are required' }, { status:400 });
 	const supabase = getSupabaseAdmin();
-	const query = supabase.from('orbitfs_users').select('id,username,display_name,email,password_hash,role,status,avatar_url,permissions,must_change_pin,ban_reason,login_count');
-	const { data:user, error } = identity.includes('@')
-		? await query.ilike('email', identity.toLowerCase()).maybeSingle()
-		: await query.ilike('username', identity).maybeSingle();
-	if (error) return json({ error:'Login failed' }, { status:500 });
-	if (!user || !verifyPassword(credential, user.password_hash)) return json({ error:'Invalid username or password' }, { status:401 });
+	let user;
+	try { user = await authenticateOrbitCredentials(identity, credential); }
+	catch { return json({ error:'Login failed' }, { status:500 }); }
+	if (!user) return json({ error:'Invalid username or password' }, { status:401 });
 	if (user.status === 'banned') return json({ error:user.ban_reason ? `Account banned: ${user.ban_reason}` : 'Account banned' }, { status:403 });
 	if (user.status === 'inactive') return json({ error:'Account is inactive' }, { status:403 });
 	let ip: string | null = null;

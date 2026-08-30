@@ -36,11 +36,11 @@ export async function validateAuthorizationRequest(input: {
 }) {
 	if (input.responseType !== 'code') throw Object.assign(new Error('Only response_type=code is supported'), { status: 400 });
 	if (!input.codeChallenge || input.codeChallengeMethod !== 'S256') throw Object.assign(new Error('PKCE S256 is required'), { status: 400 });
-	assertResource(input.resource);
+	const resource = assertResource(input.resource || MCP_RESOURCE);
 	const client = await getOAuthClient(input.clientId);
 	const redirects = Array.isArray(client.redirect_uris) ? client.redirect_uris.map(String) : [];
 	if (!redirects.includes(input.redirectUri)) throw Object.assign(new Error('Redirect URI is not registered'), { status: 400 });
-	return { client, scope: normalizeScope(input.scope) };
+	return { client, scope: normalizeScope(input.scope), resource };
 }
 
 export async function issueAuthorizationCode(input: {

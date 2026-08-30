@@ -32,6 +32,19 @@ export function verifyPassword(password: string, encoded: string) {
 	return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+export async function authenticateOrbitCredentials(identity: string, credential: string) {
+	const value = String(identity || '').trim();
+	if (!value || !credential) return null;
+	const supabase = getSupabaseAdmin();
+	const query = supabase.from('orbitfs_users').select('id,username,display_name,email,password_hash,role,status,avatar_url,permissions,must_change_pin,ban_reason,login_count');
+	const { data: user, error: dbError } = value.includes('@')
+		? await query.ilike('email', value.toLowerCase()).maybeSingle()
+		: await query.ilike('username', value).maybeSingle();
+	if (dbError) throw dbError;
+	if (!user || !verifyPassword(credential, String(user.password_hash || ''))) return null;
+	return user;
+}
+
 const hashToken = (token: string) => createHash('sha256').update(token).digest('hex');
 
 export async function createSession(
