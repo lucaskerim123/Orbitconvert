@@ -10,7 +10,7 @@ import type { OrbitUser } from '$lib/server/auth';
 import { workspaceUiState, activeContext, clearActiveContext, listWorkspaceEntries, readFile, loadFile, loadFolder, removeContextFile, listProfiles, loadProfile, loadBundle, unloadBundle, loadDefaults, runStartup, writeFile, makeFolder, moveWorkspaceEntry, deleteWorkspaceEntry, uploadFromUrl, type RuntimeIdentity } from './cloud-runtime';
 
 const SERVER_NAME='orbitfs-mcp';
-const SERVER_VERSION='0.5.0';
+const SERVER_VERSION='0.5.1';
 const textResult=(text:string,structuredContent:any,meta?:any)=>({content:[{type:'text' as const,text}],structuredContent,...(meta?{_meta:meta}:{})});
 
 async function oauthUser(extra:any,fallback?:AuthInfo):Promise<OrbitUser>{const authInfo=extra?.authInfo||fallback;const id=String(authInfo?.extra?.userId||'');if(!id)throw new Error('Authenticated OrbitFS user is required');const db=getSupabaseAdmin();const {data,error}=await db.from('orbitfs_users').select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason').eq('id',id).maybeSingle();if(error)throw error;if(!data||data.status!=='active')throw new Error('OrbitFS user is unavailable');return data as OrbitUser;}
@@ -53,10 +53,10 @@ export function createOrbitMcpServer(authInfo?:AuthInfo){
  server.registerTool('upload_chatgpt_file',{title:'Upload ChatGPT file to OrbitFS',description:'Import a ChatGPT-provided file into an OrbitFS workspace.',inputSchema:{workspaceId:z.string(),directory:z.string().optional(),file:z.any()},annotations:mut},async({workspaceId,directory='',file},e)=>{const i=await identity(e,authInfo);const result=await uploadFromUrl(i,workspaceId,directory,file);return textResult(`Uploaded ${result.path}.`,result);});
 
  const appHandler=async(args:any,e:any)=>{const i=await identity(e,authInfo);const state=await workspaceUiState(i,args.workspaceId||'default');return textResult(`OrbitFS ${state.dashboard.workspace.name} is open.`,state,{orbitfsUiState:state});};
- const appDef={title:'OrbitFS',description:'Open the full OrbitFS workspace manager inside ChatGPT.',inputSchema:{workspaceId:z.string().optional()},annotations:ro,_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}};
+ const appDef={title:'OrbitFS',description:'Open the full OrbitFS workspace manager inside ChatGPT.',inputSchema:{workspaceId:z.string().optional()},annotations:ro,_meta:{ui:{resourceUri:ORBITFS_WIDGET_URI},'openai/outputTemplate':ORBITFS_WIDGET_URI,'openai/widgetAccessible':true,'openai/toolInvocation/invoking':'Opening OrbitFS','openai/toolInvocation/invoked':'OrbitFS ready'}};
  registerAppTool(server,'orbitfs',appDef,appHandler);
  registerAppTool(server,'orbitfs_dashboard',{...appDef,title:'Open OrbitFS'},appHandler);
- registerAppResource(server,'OrbitFS',ORBITFS_WIDGET_URI,{description:'Full OrbitFS ChatGPT workspace interface.'},async()=>({contents:[{uri:ORBITFS_WIDGET_URI,mimeType:RESOURCE_MIME_TYPE,text:ORBITFS_WIDGET_HTML,_meta:{ui:{prefersBorder:true,csp:{connectDomains:['https://orbitfsproject.vercel.app','https://orbitfsmcp.vercel.app'],resourceDomains:[]}},'openai/widgetDescription':'OrbitFS workspace, startup, context, profile and file manager.'}}]}));
+ registerAppResource(server,'OrbitFS',ORBITFS_WIDGET_URI,{description:'Full OrbitFS ChatGPT workspace interface.'},async()=>({contents:[{uri:ORBITFS_WIDGET_URI,mimeType:RESOURCE_MIME_TYPE,text:ORBITFS_WIDGET_HTML,_meta:{ui:{prefersBorder:true,csp:{connectDomains:['https://orbitfsproject.vercel.app','https://orbitfsmcp.vercel.app'],resourceDomains:[]}},'openai/widgetDescription':'OrbitFS workspace, startup, context, profile and file manager.','openai/widgetPrefersBorder':true,'openai/widgetCSP':{connect_domains:['https://orbitfsproject.vercel.app','https://orbitfsmcp.vercel.app'],resource_domains:[]}}}]}));
  return server;
 }
 const mcpHttpHandler=createMcpHandler((ctx)=>createOrbitMcpServer(ctx.authInfo as AuthInfo|undefined),{legacy:'stateless',onerror:(error)=>console.error('[orbitfs-mcp]',error instanceof Error?error.message:String(error))});
