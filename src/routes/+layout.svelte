@@ -62,6 +62,7 @@
 	const primaryNav = $derived([
 		{ label: 'Files', href: '/', icon: Folder },
 		{ label: 'Library', href: '/library', icon: Library },
+		{ label: 'Studio', href: '/studio', icon: ScrollText },
 		{ label: 'Workspace Manager', href: '/workspaces', icon: Building2 },
 		...addonPrimaryNav
 	]);
