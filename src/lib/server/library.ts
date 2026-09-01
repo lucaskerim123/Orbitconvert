@@ -13,15 +13,34 @@ const uid = (prefix:string) => `${prefix}_${crypto.randomUUID()}`;
 const text = (value:any,max=500) => String(value ?? '').trim().slice(0,max);
 const list = (value:any) => [...new Set((Array.isArray(value)?value:String(value||'').split(',')).map((v:any)=>text(v,96)).filter(Boolean))];
 
+export const LIBRARY_ROLES = [
+  {id:'core_file',label:'Core File',sourceKinds:['file','folder'],loadMode:'full'},
+  {id:'core_profile',label:'Core Profile',sourceKinds:['profile'],loadMode:'full'},
+  {id:'incident_log',label:'Incident Log',sourceKinds:['file','folder','profile']},
+  {id:'timeline',label:'Timeline',sourceKinds:['file','folder','profile']},
+  {id:'relationship_timeline',label:'Relationship Timeline',sourceKinds:['file','folder','profile']},
+  {id:'knowledge_target',label:'Knowledge Target',sourceKinds:['file','folder','profile']},
+  {id:'reference_target',label:'Reference Target',sourceKinds:['file','folder','profile']},
+  {id:'evidence_target',label:'Evidence Store',sourceKinds:['file','folder','profile']},
+  {id:'profile_record_target',label:'Profile Record Target',sourceKinds:['profile']},
+  {id:'general_record_target',label:'General Record Target',sourceKinds:['file','folder','profile']}
+] as const;
+export const LIBRARY_LIFECYCLES = ['unclassified','current','final_locked','old','draft','archived','reference_only','deprecated'] as const;
+const roleIds=new Set(LIBRARY_ROLES.map(x=>x.id));
+const lifecycleIds=new Set<string>(LIBRARY_LIFECYCLES as readonly string[]);
+const roles=(value:any)=>list(value).map((x:any)=>String(x).toLowerCase().replace(/[^a-z0-9_-]+/g,'_')).filter((x:any)=>roleIds.has(x));
+const lifecycle=(value:any)=>lifecycleIds.has(String(value||'').toLowerCase())?String(value).toLowerCase():'unclassified';
+
 function blank(workspaceId:string) {
-	return { version:5, workspaceId, items:[], collections:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], createdAt:now(), updatedAt:now() } as any;
+	return { version:8, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], createdAt:now(), updatedAt:now() } as any;
 }
 
 export async function readLibrary(workspaceId:string) {
 	const db=getSupabaseAdmin();
 	const r=await db.from('orbitfs_library_state').select('state,updated_at').eq('workspace_id',workspaceId).maybeSingle();
 	if(r.error) throw r.error;
-	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:5};
+	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:8};
+	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= [];
 	state.updatedAt=r.data?.updated_at || state.updatedAt;
 	return state;
 }
@@ -39,7 +58,7 @@ export async function libraryContext(user:OrbitUser,workspaceId:string) {
 
 export async function presentLibrary(user:OrbitUser,workspaceId:string) {
 	const [state,ctx]=await Promise.all([readLibrary(workspaceId),libraryContext(user,workspaceId)]);
-	const stats={ items:state.items.length, collections:state.collections.length, links:state.links.length, sections:state.sections.length, events:state.events.length, records:state.records.length, facts:state.facts.length, relations:state.factRelations.length };
+	const stats={ items:state.items.length, collections:state.collections.length, groups:state.groups.length, categories:state.categories.length, links:state.links.length, sections:state.sections.length, events:state.events.length, records:state.records.length, facts:state.facts.length, relations:state.factRelations.length, changeRequests:state.changeRequests.length };
 	return {...state,canManage:ctx.canManage,members:ctx.members,stats};
 }
 
@@ -52,7 +71,7 @@ export async function createLibraryItem(user:OrbitUser,workspaceId:string,input:
 	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:{path:normalizePath(input.path),sourceKind:text(input.sourceKind||'file',32)});
 	const key=`${provider}:${JSON.stringify(locator)}`; const existing=state.items.find((x:any)=>`${x.source?.provider}:${JSON.stringify(x.source?.locator||{})}`===key);
 	if(existing) return {item:existing,existing:true};
-	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId,180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
+	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId,180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
 	state.items.push(item); await saveLibrary(workspaceId,state); return {item,existing:false};
 }
 
@@ -61,6 +80,7 @@ export async function updateLibraryItem(user:OrbitUser,workspaceId:string,id:str
 	if(!item) throw Object.assign(new Error('Knowledge item not found'),{status:404});
 	for(const key of ['name','description','category','status','visibility','versionLabel']) if(input[key]!==undefined) item[key]=text(input[key],key==='description'?1000:180);
 	for(const key of ['tags','purposes','aliases']) if(input[key]!==undefined) item[key]=list(input[key]);
+	if(input.roles!==undefined) item.roles=roles(input.roles); if(input.lifecycle!==undefined) item.lifecycle=lifecycle(input.lifecycle);
 	for(const key of ['importance','viewerIds','editorIds','guards','metadata']) if(input[key]!==undefined) item[key]=input[key];
 	item.updatedAt=now(); item.updatedBy=user.username; await saveLibrary(workspaceId,state); return {item};
 }export async function deleteLibraryItem(user:OrbitUser,workspaceId:string,id:string,force=false) {
