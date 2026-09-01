@@ -11,7 +11,7 @@
 	type ScanCandidate = { path:string; name:string; extension:string; size:number; modifiedAt:string; registered:boolean; itemId?:string|null; itemName?:string|null; indexable:boolean };
 	type KnowledgeItem = {
 		id: string; kind: string; name: string; description?: string; category?: string;
-		tags?: string[]; purposes?: string[]; aliases?: string[]; importance?: number; status: string; visibility?: string; viewerIds?: string[]; editorIds?: string[]; ownerUserId?: string; versionLabel?: string; guards?: { sourceWriteLocked?:boolean; metadataLocked?:boolean; indexingLocked?:boolean; removalLocked?:boolean };
+		tags?: string[]; purposes?: string[]; roles?: string[]; lifecycle?: string; aliases?: string[]; importance?: number; status: string; visibility?: string; viewerIds?: string[]; editorIds?: string[]; ownerUserId?: string; versionLabel?: string; content?: string; contentFormat?: string; guards?: { sourceWriteLocked?:boolean; metadataLocked?:boolean; indexingLocked?:boolean; removalLocked?:boolean };
 		source: { provider: string; locator: any }; sourceState?: any;
 		collectionCount?: number; linkCount?: number; usageCount?: number;
 		sectionCount?: number; eventCount?: number; recordCount?: number; changeCount?: number; entityMentionCount?: number; factCount?: number; relationCount?: number; sourceTracking?: any;
@@ -39,10 +39,10 @@
 	let loadedWorkspaceId = $state('');
 	let searchText = $state(''), recordQuery = $state('');
 	let selectedItemId = $state('');
-	let registerKind = $state<'file' | 'folder' | 'profile'>('file');
+	let registerKind = $state<'document' | 'file' | 'folder' | 'profile'>('document');
 	let registerPath = $state(''), registerProfileId = $state('');
 	let registerName = $state(''), registerDescription = $state(''), registerCategory = $state('');
-	let registerTags = $state(''), registerPurposes = $state(''), registerVisibility = $state('workspace'), registerSharedIds = $state<string[]>([]), registerCustomPurpose = $state('');
+	let registerTags = $state(''), registerPurposes = $state(''), registerRoles = $state(''), registerLifecycle = $state('draft'), registerContent = $state(''), registerVisibility = $state('workspace'), registerSharedIds = $state<string[]>([]), registerCustomPurpose = $state('');
 	let scanBusy = $state(false), scanCandidates = $state<ScanCandidate[]>([]), scanSelected = $state<string[]>([]), scanQuery = $state(''), scanShowRegistered = $state(false), scanDone = $state(false);
 
 	let collectionName = $state(''), collectionDescription = $state(''), collectionMode = $state('live'), collectionVisibility = $state('workspace'), collectionAdvanced = $state(false);
@@ -55,7 +55,7 @@
 	let eventItemId = $state(''), eventSectionId = $state(''), eventDate = $state(''), eventTitle = $state(''), eventDescription = $state('');
 
 	let editName = $state(''), editDescription = $state(''), editCategory = $state('');
-	let editTags = $state(''), editPurposes = $state(''), editAliases = $state(''), editImportance = $state(0.5), editVisibility = $state('workspace'), editVersionLabel = $state(''), editSharedIds = $state<string[]>([]), editCustomPurpose = $state('');
+	let editTags = $state(''), editPurposes = $state(''), editRoles = $state(''), editLifecycle = $state('unclassified'), editContent = $state(''), editAliases = $state(''), editImportance = $state(0.5), editVisibility = $state('workspace'), editVersionLabel = $state(''), editSharedIds = $state<string[]>([]), editCustomPurpose = $state('');
 	let guardSourceWrite = $state(false), guardMetadata = $state(false), guardIndexing = $state(false), guardRemoval = $state(false);
 	let intelligenceQuery = $state(''), intelligenceStatus = $state<'all' | 'candidate' | 'confirmed'>('all');
 	let lineageItemId = $state(''), lineageTargetId = $state(''), lineageRelation = $state<'supersedes' | 'derived_from'>('supersedes'), lineageVersionLabel = $state('');
@@ -129,6 +129,9 @@
 		editCategory = item.category || '';
 		editTags = (item.tags || []).join(', ');
 		editPurposes = (item.purposes || []).join(', ');
+		editRoles = (item.roles || []).join(', ');
+		editLifecycle = item.lifecycle || 'unclassified';
+		editContent = item.content || '';
 		editCustomPurpose = '';
 		editAliases = (item.aliases || []).join(', ');
 		editImportance = Number.isFinite(Number(item.importance)) ? Number(item.importance) : 0.5;
@@ -198,16 +201,18 @@
 	async function registerKnowledge() {
 		const workspaceId = currentWorkspaceId();
 		if (!workspaceId || !data?.canManage) return;
-		if (registerKind !== 'profile' && !registerPath.trim()) return;
+		if (registerKind !== 'profile' && registerKind !== 'document' && !registerPath.trim()) return;
 		if (registerKind === 'profile' && !registerProfileId) return;
+		if (registerKind === 'document' && !registerName.trim()) return;
 		busy = true; error = ''; message = '';
 		try {
-			const body: any = { name: registerName, description: registerDescription, category: registerCategory, tags: registerTags, purposes: registerPurposes, visibility: registerVisibility, viewerIds:registerVisibility === 'shared' ? registerSharedIds : [] };
+			const body: any = { name: registerName, description: registerDescription, category: registerCategory, tags: registerTags, purposes: registerPurposes, roles: registerRoles, lifecycle: registerLifecycle, visibility: registerVisibility, viewerIds:registerVisibility === 'shared' ? registerSharedIds : [] };
+			if (registerKind === 'document') Object.assign(body, { provider: 'library.native', content: registerContent, contentFormat: 'markdown' });
 			if (registerKind === 'profile') Object.assign(body, { provider: 'base.profiles', profileId: registerProfileId });
 			else Object.assign(body, { provider: 'base.files', path: registerPath, sourceKind: registerKind });
 			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(workspaceId)}/items`, body);
 			message = result.existing ? 'That source is already registered. Opened the existing Knowledge Item.' : 'Knowledge Item registered.';
-			registerPath = ''; registerProfileId = ''; registerName = ''; registerDescription = ''; registerCategory = ''; registerTags = ''; registerPurposes = ''; registerCustomPurpose = ''; registerSharedIds = [];
+			registerPath = ''; registerProfileId = ''; registerName = ''; registerDescription = ''; registerCategory = ''; registerTags = ''; registerPurposes = ''; registerRoles = ''; registerLifecycle = 'draft'; registerContent = ''; registerCustomPurpose = ''; registerSharedIds = [];
 			await refresh(); if (result.item?.id) beginEdit(data!.items.find((item) => item.id === result.item.id) || result.item);
 		} catch (err) { fail(err, 'Could not register knowledge'); }
 		finally { busy = false; }
@@ -217,7 +222,7 @@
 		busy = true; error = ''; message = '';
 		try {
 			await api.patch(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/items/${encodeURIComponent(selectedItem.id)}`, {
-				name: editName, description: editDescription, category: editCategory, tags: editTags, purposes: editPurposes, aliases: editAliases, importance: editImportance, visibility: editVisibility, viewerIds:editVisibility === 'shared' ? editSharedIds : [], versionLabel: editVersionLabel, guards: { sourceWriteLocked:guardSourceWrite, metadataLocked:guardMetadata, indexingLocked:guardIndexing, removalLocked:guardRemoval }
+				name: editName, description: editDescription, category: editCategory, tags: editTags, purposes: editPurposes, roles: editRoles, lifecycle: editLifecycle, aliases: editAliases, importance: editImportance, visibility: editVisibility, viewerIds:editVisibility === 'shared' ? editSharedIds : [], versionLabel: editVersionLabel, ...(selectedItem.source.provider === 'library.native' ? { content:editContent, contentFormat:'markdown' } : {}), guards: { sourceWriteLocked:guardSourceWrite, metadataLocked:guardMetadata, indexingLocked:guardIndexing, removalLocked:guardRemoval }
 			});
 			message = 'Knowledge metadata updated.'; await refresh();
 			const updated = data?.items.find((item) => item.id === selectedItem.id); if (updated) beginEdit(updated);
@@ -476,20 +481,25 @@
 			<Card><CardHeader><CardTitle>Register existing knowledge</CardTitle></CardHeader><CardContent class="space-y-3">
 				<div class="grid gap-2 md:grid-cols-[10rem_minmax(0,1fr)]">
 					<select class="rounded-md border bg-background p-2 text-sm" bind:value={registerKind}>
-						<option value="file">File</option><option value="folder">Folder</option><option value="profile">Profile</option>
+						<option value="document">Document</option><option value="file">File</option><option value="folder">Folder</option><option value="profile">Profile</option>
 					</select>
 					{#if registerKind === 'profile'}
 						<select class="rounded-md border bg-background p-2 text-sm" bind:value={registerProfileId}><option value="">Select profile</option>{#each profiles as profile}<option value={profile.id}>{profile.name}</option>{/each}</select>
+					{:else if registerKind === 'document'}
+						<div class="rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">Stored directly in the Library. No filesystem path required.</div>
 					{:else}
 						<PathPicker bind:value={registerPath} workspaceId={currentWorkspaceId()} />
 					{/if}
 				</div>
-				<div class="grid gap-2 md:grid-cols-2"><Input bind:value={registerName} placeholder="Display name (optional)" /><input list="knowledge-category-options" class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={registerCategory} placeholder="Category — choose a basic or type your own" /></div>
+				<div class="grid gap-2 md:grid-cols-2"><Input bind:value={registerName} placeholder={registerKind === 'document' ? 'Document title' : 'Display name (optional)'} /><input list="knowledge-category-options" class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={registerCategory} placeholder="Category — choose a basic or type your own" /></div>
+
+				<div class="grid gap-2 md:grid-cols-2"><label class="space-y-1 text-sm"><span>Lifecycle</span><select class="w-full rounded-md border bg-background p-2" bind:value={registerLifecycle}><option value="draft">Draft</option><option value="current">Current</option><option value="final_locked">Final / Locked</option><option value="reference_only">Reference Only</option><option value="old">Old</option><option value="archived">Archived</option><option value="deprecated">Deprecated</option><option value="unclassified">Unclassified</option></select></label><label class="space-y-1 text-sm"><span>Library roles</span><Input bind:value={registerRoles} placeholder="e.g. core_file, timeline, knowledge_target" /></label></div>
+				{#if registerKind === 'document'}<label class="block space-y-1 text-sm"><span>Document content</span><textarea class="min-h-64 w-full rounded-md border bg-background p-3 font-mono text-sm" bind:value={registerContent} placeholder="Write or paste the document here. Markdown is supported."></textarea></label>{/if}
 				<div class="rounded-md border p-3"><p class="text-sm font-medium">Purpose</p><p class="mb-2 text-xs text-muted-foreground">Pick common purposes or add your own. Multiple purposes are allowed.</p><div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><select class="rounded-md border bg-background p-2 text-sm" onchange={(event) => { if (event.currentTarget.value) { addRegisterPurpose(event.currentTarget.value); event.currentTarget.value = ''; } }}><option value="">Add a common purpose</option>{#each purposeOptions as option}<option value={option}>{option}</option>{/each}</select><Input bind:value={registerCustomPurpose} placeholder="Custom purpose" onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addRegisterPurpose(registerCustomPurpose); registerCustomPurpose = ''; } }} /><Button type="button" variant="outline" onclick={() => { addRegisterPurpose(registerCustomPurpose); registerCustomPurpose = ''; }} disabled={!registerCustomPurpose.trim()}>Add</Button></div>{#if purposeValues(registerPurposes).length}<div class="mt-2 flex flex-wrap gap-1">{#each purposeValues(registerPurposes) as purpose}<button type="button" class="rounded-full border bg-muted px-2 py-1 text-xs" onclick={() => (registerPurposes = removePurpose(registerPurposes, purpose))}>{purpose} ×</button>{/each}</div>{/if}</div>
 				<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_12rem]"><Input bind:value={registerTags} placeholder="Tags, comma separated" /><select class="rounded-md border bg-background p-2 text-sm" bind:value={registerVisibility}><option value="workspace">Workspace</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
 				{#if registerVisibility === 'shared'}<div class="rounded-md border p-3"><p class="mb-2 text-xs text-muted-foreground">Share with workspace members</p><div class="flex flex-wrap gap-2">{#each data.members || [] as member}<label class="flex items-center gap-2 rounded border px-2 py-1 text-xs"><input type="checkbox" checked={registerSharedIds.includes(member.id)} onchange={() => (registerSharedIds = registerSharedIds.includes(member.id) ? registerSharedIds.filter((id) => id !== member.id) : [...registerSharedIds, member.id])} />{member.username} Â· {member.role}</label>{/each}</div></div>{/if}
 				<textarea class="min-h-20 w-full rounded-md border bg-background p-2 text-sm" bind:value={registerDescription} placeholder="Description / what this knowledge is for"></textarea>
-				<div class="flex justify-end"><Button onclick={registerKnowledge} disabled={busy || (registerKind === 'profile' ? !registerProfileId : !registerPath.trim())}><Plus class="size-4" />Register</Button></div>
+				<div class="flex justify-end"><Button onclick={registerKnowledge} disabled={busy || (registerKind === 'profile' ? !registerProfileId : registerKind === 'document' ? !registerName.trim() : !registerPath.trim())}><Plus class="size-4" />Register</Button></div>
 			</CardContent></Card>
 		{/if}
 
@@ -502,7 +512,7 @@
 						<div class="flex items-start gap-3">
 							<div class="mt-0.5 rounded-md border p-2">{#if item.kind === 'folder'}<Folder class="size-4" />{:else if item.kind === 'profile'}<ContactRound class="size-4" />{:else}<FileIcon class="size-4" />{/if}</div>
 							<div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><strong class="break-words">{item.name}</strong><span class="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{item.status}</span></div>
-								<p class="mt-1 break-words text-xs text-muted-foreground">{item.source.provider === 'base.files' ? `/${item.source.locator.path}` : `Profile · ${item.sourceState?.profileType || item.kind}`}</p>
+								<p class="mt-1 break-words text-xs text-muted-foreground">{item.source.provider === 'base.files' ? `/${item.source.locator.path}` : item.source.provider === 'library.native' ? `Library document · ${item.lifecycle || 'unclassified'}` : `Profile · ${item.sourceState?.profileType || item.kind}`}</p>
 								{#if item.description}<p class="mt-2 line-clamp-2 text-sm text-muted-foreground">{item.description}</p>{/if}
 								<div class="mt-2 flex flex-wrap gap-1">{#each item.tags || [] as tag}<span class="rounded bg-muted px-1.5 py-0.5 text-[11px]">#{tag}</span>{/each}</div>
 							</div>
@@ -514,10 +524,12 @@
 
 			<Card><CardHeader><CardTitle>{selectedItem ? 'Knowledge details' : 'Select an item'}</CardTitle></CardHeader><CardContent class="space-y-3">
 				{#if !selectedItem}<p class="text-sm text-muted-foreground">Choose a Knowledge Item to inspect its canonical source, metadata and usage.</p>{:else}
-					<div class="rounded-md border bg-muted/30 p-3 text-sm"><p class="font-medium">Canonical source</p><p class="mt-1 break-all text-xs text-muted-foreground">{selectedItem.source.provider === 'base.files' ? `/${selectedItem.source.locator.path}` : `profile:${selectedItem.source.locator.profileId}`}</p><p class="mt-2 text-xs text-muted-foreground">Provider: {selectedItem.source.provider} · Current: {selectedItem.sourceState?.exists === false ? 'missing' : 'available'}</p></div>
+					<div class="rounded-md border bg-muted/30 p-3 text-sm"><p class="font-medium">Canonical source</p><p class="mt-1 break-all text-xs text-muted-foreground">{selectedItem.source.provider === 'base.files' ? `/${selectedItem.source.locator.path}` : selectedItem.source.provider === 'library.native' ? `library:${selectedItem.id}` : `profile:${selectedItem.source.locator.profileId}`}</p><p class="mt-2 text-xs text-muted-foreground">Provider: {selectedItem.source.provider} · Current: {selectedItem.sourceState?.exists === false ? 'missing' : 'available'}</p></div>
 					<label class="space-y-1 text-sm"><span>Name</span><Input bind:value={editName} disabled={!data.canManage} /></label>
 					<label class="space-y-1 text-sm"><span>Description</span><textarea class="min-h-24 w-full rounded-md border bg-background p-2" bind:value={editDescription} disabled={!data.canManage}></textarea></label>
 					<label class="space-y-1 text-sm"><span>Category</span><input list="knowledge-category-options" class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={editCategory} disabled={!data.canManage} placeholder="Choose a basic category or type your own" /></label>
+					<div class="grid gap-2 md:grid-cols-2"><label class="space-y-1 text-sm"><span>Lifecycle</span><select class="w-full rounded-md border bg-background p-2" bind:value={editLifecycle} disabled={!data.canManage}><option value="current">Current</option><option value="final_locked">Final / Locked</option><option value="draft">Draft</option><option value="reference_only">Reference Only</option><option value="old">Old</option><option value="archived">Archived</option><option value="deprecated">Deprecated</option><option value="unclassified">Unclassified</option></select></label><label class="space-y-1 text-sm"><span>Library roles</span><Input bind:value={editRoles} disabled={!data.canManage} placeholder="core_file, timeline, knowledge_target" /></label></div>
+					{#if selectedItem.source.provider === 'library.native'}<label class="block space-y-1 text-sm"><span>Document content</span><textarea class="min-h-80 w-full rounded-md border bg-background p-3 font-mono text-sm" bind:value={editContent} disabled={!data.canManage}></textarea><span class="text-xs text-muted-foreground">Stored directly in Supabase Library; no physical file is required.</span></label>{/if}
 					<div class="rounded-md border p-3"><p class="text-sm font-medium">Purposes</p><p class="mb-2 text-xs text-muted-foreground">Use the basics or add custom purposes.</p><div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]"><select class="rounded-md border bg-background p-2 text-sm" disabled={!data.canManage} onchange={(event) => { if (event.currentTarget.value) { addEditPurpose(event.currentTarget.value); event.currentTarget.value = ''; } }}><option value="">Add a common purpose</option>{#each purposeOptions as option}<option value={option}>{option}</option>{/each}</select><Input bind:value={editCustomPurpose} disabled={!data.canManage} placeholder="Custom purpose" onkeydown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addEditPurpose(editCustomPurpose); editCustomPurpose = ''; } }} /><Button type="button" variant="outline" onclick={() => { addEditPurpose(editCustomPurpose); editCustomPurpose = ''; }} disabled={!data.canManage || !editCustomPurpose.trim()}>Add</Button></div>{#if purposeValues(editPurposes).length}<div class="mt-2 flex flex-wrap gap-1">{#each purposeValues(editPurposes) as purpose}<button type="button" class="rounded-full border bg-muted px-2 py-1 text-xs" disabled={!data.canManage} onclick={() => (editPurposes = removePurpose(editPurposes, purpose))}>{purpose} ×</button>{/each}</div>{/if}</div>
 					<label class="space-y-1 text-sm"><span>Tags</span><Input bind:value={editTags} disabled={!data.canManage} /></label>
 					<label class="space-y-1 text-sm"><span>Aliases / known names</span><Input bind:value={editAliases} disabled={!data.canManage} placeholder="Comma separated" /></label>
