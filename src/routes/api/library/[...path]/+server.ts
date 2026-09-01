@@ -5,7 +5,7 @@ import {
 	createCollection, createEvent, createLibraryItem, createLink, deleteCollection, deleteEvent,
 	deleteLibraryItem, deleteLink, exportLibrary, importLibrary, indexLibraryItem, presentLibrary,
 	readLibrary, registerScannedFiles, retrieveLibrary, saveLibrary, saveUsage, deleteUsage, scanLibraryFiles,
-	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest
+	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest, createLibraryGroup, updateLibraryGroup, deleteLibraryGroup, resolveLibraryRoleTargets, libraryHealth, editLibraryChangeRequestOperation, createAppliedChangeRevision
 } from '$lib/server/library';
 
 const clean=(v:any)=>String(v??'').trim();
@@ -16,7 +16,9 @@ function route(params:any){const p=clean(params.path).split('/').filter(Boolean)
 export async function GET({params,url,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);if(!r.area)return json(await presentLibrary(user,r.workspaceId));
 		if(r.area==='export')return json(await exportLibrary(r.workspaceId));
-		if(r.area==='providers')return json({providers:[{id:'base.files',name:'Files'},{id:'base.profiles',name:'Profiles'}]});
+		if(r.area==='providers')return json({providers:[{id:'base.files',name:'Files'},{id:'base.profiles',name:'Profiles'},{id:'library.native',name:'Native Library'}]});
+		if(r.area==='targets')return json(await resolveLibraryRoleTargets(user,r.workspaceId,url.searchParams.get('role')||'general_record_target'));
+		if(r.area==='health')return json(await libraryHealth(user,r.workspaceId));
 		if(r.area==='change-requests')return json(await listLibraryChangeRequests(user,r.workspaceId,Object.fromEntries(url.searchParams.entries())));
 		if(r.area==='changes'){const s=await readLibrary(r.workspaceId);return json({changes:[...(s.sourceHistory||[])].reverse(),count:(s.sourceHistory||[]).length});}
 		if(r.area==='intelligence'){const s=await readLibrary(r.workspaceId);return json({workspaceId:r.workspaceId,entities:s.entities||[],entityMentions:s.entityMentions||[],facts:s.facts||[],factRelations:s.factRelations||[],stats:{facts:(s.facts||[]).length,relations:(s.factRelations||[]).length}});}
@@ -28,7 +30,9 @@ export async function GET({params,url,cookies}:any){
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function POST({params,request,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='groups'&&!r.id)return json(await createLibraryGroup(user,r.workspaceId,input));
 		if(r.area==='change-requests'&&!r.id)return json(await createLibraryChangeRequest(user,r.workspaceId,input));
+		if(r.area==='change-requests'&&r.id&&r.operation==='revision')return json({request:await createAppliedChangeRevision(user,r.workspaceId,r.id,input)});
 		if(r.area==='import')return json(await importLibrary(user,r.workspaceId,input));
 		if(r.area==='scan')return json(await scanLibraryFiles(user,r.workspaceId,input));
 		if(r.area==='scan-register')return json(await registerScannedFiles(user,r.workspaceId,input));
@@ -44,7 +48,9 @@ export async function POST({params,request,cookies}:any){
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function PATCH({params,request,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
-		if(r.area==='change-requests'&&r.id&&r.operation==='targets')return json(await assignLibraryChangeRequestTargets(user,r.workspaceId,r.id,input));
+		if(r.area==='groups'&&r.id)return json(await updateLibraryGroup(user,r.workspaceId,r.id,input));
+		if(r.area==='change-requests'&&r.id&&r.operation==='targets')return json({request:await assignLibraryChangeRequestTargets(user,r.workspaceId,r.id,input)});
+		if(r.area==='change-requests'&&r.id&&r.operation==='operations')return json({request:await editLibraryChangeRequestOperation(user,r.workspaceId,r.id,input)});
 		if(r.area==='change-requests'&&r.id&&!r.operation)return json(await resolveLibraryChangeRequest(user,r.workspaceId,r.id,input));
 		if(r.area==='items'&&r.id)return json(await updateLibraryItem(user,r.workspaceId,r.id,input));
 		if(r.area==='collections'&&r.id)return json(await updateCollection(user,r.workspaceId,r.id,input));
@@ -56,6 +62,7 @@ export async function PATCH({params,request,cookies}:any){
 
 export async function DELETE({params,url,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);
+		if(r.area==='groups'&&r.id)return json(await deleteLibraryGroup(user,r.workspaceId,r.id));
 		if(r.area==='items'&&r.id)return json(await deleteLibraryItem(user,r.workspaceId,r.id,url.searchParams.get('force')==='true'));
 		if(r.area==='collections'&&r.id)return json(await deleteCollection(user,r.workspaceId,r.id));
 		if(r.area==='links'&&r.id)return json(await deleteLink(user,r.workspaceId,r.id));
