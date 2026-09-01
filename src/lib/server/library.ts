@@ -67,11 +67,11 @@ function requireManage(canManage:boolean) {
 }
 export async function createLibraryItem(user:OrbitUser,workspaceId:string,input:any) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId);
-	const provider=text(input.provider || input.source?.provider || (input.profileId?'base.profiles':'base.files'),120);
-	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:{path:normalizePath(input.path),sourceKind:text(input.sourceKind||'file',32)});
+	const provider=text(input.provider || input.source?.provider || (input.profileId?'base.profiles':input.content!==undefined?'library.native':'base.files'),120);
+	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:provider==='library.native'?{documentId:text(input.documentId||crypto.randomUUID(),160)}:{path:normalizePath(input.path),sourceKind:text(input.sourceKind||'file',32)});
 	const key=`${provider}:${JSON.stringify(locator)}`; const existing=state.items.find((x:any)=>`${x.source?.provider}:${JSON.stringify(x.source?.locator||{})}`===key);
 	if(existing) return {item:existing,existing:true};
-	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId,180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
+	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':provider==='library.native'?'document':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId || 'Untitled document',180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},content:provider==='library.native'?String(input.content||''):undefined,contentFormat:provider==='library.native'?text(input.contentFormat||'markdown',32):undefined,source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
 	state.items.push(item); await saveLibrary(workspaceId,state); return {item,existing:false};
 }
 
@@ -82,6 +82,7 @@ export async function updateLibraryItem(user:OrbitUser,workspaceId:string,id:str
 	for(const key of ['tags','purposes','aliases']) if(input[key]!==undefined) item[key]=list(input[key]);
 	if(input.roles!==undefined) item.roles=roles(input.roles); if(input.lifecycle!==undefined) item.lifecycle=lifecycle(input.lifecycle);
 	for(const key of ['importance','viewerIds','editorIds','guards','metadata']) if(input[key]!==undefined) item[key]=input[key];
+	if(item.source?.provider==='library.native'&&input.content!==undefined) item.content=String(input.content); if(item.source?.provider==='library.native'&&input.contentFormat!==undefined)item.contentFormat=text(input.contentFormat,32);
 	item.updatedAt=now(); item.updatedBy=user.username; await saveLibrary(workspaceId,state); return {item};
 }export async function deleteLibraryItem(user:OrbitUser,workspaceId:string,id:string,force=false) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const item=state.items.find((x:any)=>x.id===id);
@@ -132,7 +133,8 @@ export async function scanLibraryFiles(user:OrbitUser,workspaceId:string,input:a
 	for(const row of r.data??[]) { const path=normalizePath(row.path); if(root && path!==root && !path.startsWith(`${root}/`)) continue; visitedFiles++; const ext=path.includes('.')?path.slice(path.lastIndexOf('.')).toLowerCase():''; if(!scanExt.has(ext)) continue; const perms=await permissionsForPath(user,workspaceId,path); if(!perms.read) continue; const existing=registered.get(path.toLowerCase()); candidates.push({path,name:row.name,extension:ext,size:Number(row.size_bytes||0),modifiedAt:row.updated_at,registered:Boolean(existing),itemId:existing?.id||null,itemName:existing?.name||null,indexable:true}); if(candidates.length>=max) break; }
 	return {candidates,visitedFiles,newCount:candidates.filter(x=>!x.registered).length,truncated:candidates.length>=max};
 }async function sourceText(workspaceId:string,item:any) {
-	if(item.source?.provider!=='base.files') throw Object.assign(new Error('Only file sources are indexable in Base cloud right now'),{status:415});
+	if(item.source?.provider==='library.native') return String(item.content||'');
+	if(item.source?.provider!=='base.files') throw Object.assign(new Error('This Library source is not text-indexable'),{status:415});
 	const path=normalizePath(item.source.locator?.path); const entry=await findEntry(workspaceId,path); if(!entry||entry.kind!=='file') throw Object.assign(new Error('Knowledge source does not exist'),{status:404});
 	const bytes=await readEntryBytes(entry); const lower=path.toLowerCase();
 	if(lower.endsWith('.pdf')) { const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs'); const doc=await getDocument({data:new Uint8Array(bytes)}).promise; const pages:string[]=[]; for(let n=1;n<=doc.numPages;n++){const p=await doc.getPage(n);const c=await p.getTextContent();pages.push(c.items.map((x:any)=>x.str||'').join(' '));} return pages.join('\n\n'); }
