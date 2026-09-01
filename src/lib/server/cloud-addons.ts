@@ -3,7 +3,7 @@ import { getPanelLicenseSummary } from '$lib/server/license';
 
 export const CLOUD_ADDON_MANIFESTS: Record<string, any> = {
 	mcp: {
-		id: 'mcp', name: 'OrbitFS MCP', version: '0.5.2',
+		id: 'mcp', name: 'OrbitFS MCP', version: '0.5.3',
 		description: 'OAuth-authenticated startup, context, ChatGPT UI and MCP tools for OrbitFS.',
 		licenseComponent: 'orbitfs_mcp', kind: 'cloud-addon', runtimeMode: 'external-vercel',
 		transportPath: '/mcp', sourceRef: 'mcp-addon',
