@@ -140,6 +140,8 @@
 	let notificationLoading = $state(false);
 	let notificationError = $state('');
 	let notifications = $state<Notice[]>([]);
+	let canAccessWorkspaceMcp = $state(false);
+	let mcpAccessWorkspaces = $state<Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }>>([]);
 	let workspaceMode = $state(false);
 	let apexAccessMode = $state<'admins_only' | 'workspace_owners' | 'workspace_permissions'>('workspace_owners');
 	let apexAccessWorkspaces = $state<Array<{ permission?: string; management_permissions?: Record<string, boolean> }>>([]);
@@ -155,6 +157,14 @@
 			workspaceMode = true;
 			apexAccessMode = 'workspace_owners';
 			apexAccessWorkspaces = [];
+		}
+		try {
+			const access = await api.get<{ mcpWorkspaces?: Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }> }>('/mcp/access');
+			mcpAccessWorkspaces = access.mcpWorkspaces ?? [];
+			canAccessWorkspaceMcp = auth.isAdmin || mcpAccessWorkspaces.length > 0;
+		} catch {
+			mcpAccessWorkspaces = [];
+			canAccessWorkspaceMcp = auth.isAdmin;
 		}
 	}
 
@@ -226,6 +236,10 @@
 	function canAccessItem(group: { label: string; roles?: string[] }, item: { permission?: string; roles?: string[] }) {
 		if (item.roles?.length && (!auth.user?.role || !item.roles.includes(auth.user.role))) return false;
 		if (auth.isAdmin) return true;
+		if (group.label === 'MCP' || group.label === 'MCP Admin') {
+			if (!item.permission || item.permission === 'mcp_use') return canAccessWorkspaceMcp;
+			return mcpAccessWorkspaces.some((workspace) => workspace.mcpAllowed && workspace.management_permissions?.[item.permission!] === true);
+		}
 		if (group.label === 'Apex System') {
 			if (apexAccessMode === 'admins_only') return false;
 			if (!item.permission) return apexAccessWorkspaces.some((workspace) => workspace.permission === 'owner');
@@ -234,7 +248,8 @@
 			}
 			return apexAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
 		}
-		return false;
+		if (item.permission) return apexAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
+		return apexAccessWorkspaces.length > 0;
 	}
 
 	function canAccessGroup(group: { label: string; roles?: string[]; items: Array<{ permission?: string; roles?: string[] }> }) {
@@ -260,7 +275,7 @@
 	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
 	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
 	const isFilesRoute = $derived(page.url.pathname === '/');
-	const showWorkspaceSelector = $derived(workspace.enabled && isFilesRoute);
+	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/profiles') || page.url.pathname.startsWith('/studio')));
 
 	// Search is Files-scoped, but the box lives in the shared header - reset it whenever
 	// the user navigates away so it doesn't silently keep filtering a page it can't affect.
