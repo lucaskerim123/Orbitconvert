@@ -81,6 +81,25 @@ export async function PATCH({ params, request, cookies }: any) {
 		const workspace = await getWorkspace(parts[0]);
 		await requireWorkspacePermission(user,workspace,'edit_settings');
 		const body = await request.json().catch(() => ({}));
+		if (body.ownerUsername !== undefined) {
+			if (!isSystemAdmin(user)) throw Object.assign(new Error('System Owner or Admin required'), { status:403 });
+			if (workspace.is_main) throw Object.assign(new Error('Main workspace ownership cannot be reassigned'), { status:409 });
+			const target = await supabase.from('orbitfs_users').select('id,username,status').ilike('username',clean(body.ownerUsername)).maybeSingle();
+			if (target.error) throw target.error;
+			if (!target.data || target.data.status !== 'active') throw Object.assign(new Error('Target user is not available'), { status:404 });
+			const previousOwnerId = workspace.owner_id || workspace.created_by;
+			const changed = await supabase.from('orbitfs_workspaces').update({ owner_id:target.data.id,updated_at:now() }).eq('id',workspace.id).select('*').single();
+			if (changed.error) throw changed.error;
+			const existing = await supabase.from('orbitfs_workspace_members').select('mcp_enabled').eq('workspace_id',workspace.id).eq('user_id',target.data.id).maybeSingle();
+			if (existing.error) throw existing.error;
+			const ownerMember = await supabase.from('orbitfs_workspace_members').upsert({ workspace_id:workspace.id,user_id:target.data.id,role:'owner',mcp_enabled:existing.data?.mcp_enabled===true }, { onConflict:'workspace_id,user_id' });
+			if (ownerMember.error) throw ownerMember.error;
+			if (previousOwnerId && previousOwnerId !== target.data.id) { const previous = await supabase.from('orbitfs_workspace_members').upsert({ workspace_id:workspace.id,user_id:previousOwnerId,role:'editor',mcp_enabled:false }, { onConflict:'workspace_id,user_id' }); if (previous.error) throw previous.error; }
+			const staleTransfers = await supabase.from('orbitfs_workspace_requests').update({ status:'cancelled',decided_by_id:user.id,decided_at:now() }).eq('workspace_id',workspace.id).eq('request_type','ownership').in('status',['pending','admin_pending','awaiting_target']);
+			if (staleTransfers.error) throw staleTransfers.error;
+			await writeAudit({ actorUserId:user.id,workspaceId:workspace.id,action:'workspace.owner.set',targetType:'user',targetId:target.data.id,detail:{previousOwnerId,ownerUsername:target.data.username} });
+			return json({ workspace:await presentWorkspace(user,changed.data) });
+		}
 		const patch: Record<string,any> = {};
 		if (body.name !== undefined) {
 			const name = clean(body.name).slice(0,80);
@@ -183,15 +202,16 @@ export async function POST({ params, request, cookies }: any) {
 			if (target.error) throw target.error;
 			if (!target.data) throw Object.assign(new Error('Target user does not exist'), { status:404 });
 			if (target.data.id === workspace.owner_id) throw Object.assign(new Error('Target user already owns this workspace'), { status:400 });
-			const pending = await supabase.from('orbitfs_workspace_requests').select('id').eq('workspace_id',workspace.id).eq('request_type','ownership').eq('status','pending').maybeSingle();
+			const pending = await supabase.from('orbitfs_workspace_requests').select('id').eq('workspace_id',workspace.id).eq('request_type','ownership').in('status',['pending','admin_pending','awaiting_target']).maybeSingle();
 			if (pending.error) throw pending.error;
 			if (pending.data) throw Object.assign(new Error('An ownership transfer is already pending for this workspace'), { status:409 });
 			const owner = await supabase.from('orbitfs_users').select('username').eq('id',workspace.owner_id || workspace.created_by).maybeSingle();
 			if (owner.error) throw owner.error;
-			const payload = { workspace_name:workspace.name,from_username:owner.data?.username || user.username,target_username:target.data.username,message:clean(body.message).slice(0,500) };
-			const result = await supabase.from('orbitfs_workspace_requests').insert({ workspace_id:workspace.id,request_type:'ownership',requested_by_id:workspace.owner_id || user.id,target_user_id:target.data.id,status:'pending',payload }).select('*').single();
+			const fromUserId=workspace.owner_id || workspace.created_by || user.id;
+			const payload = { workspace_name:workspace.name,from_user_id:fromUserId,from_username:owner.data?.username || user.username,target_user_id:target.data.id,target_username:target.data.username,message:clean(body.message).slice(0,500) };
+			const result = await supabase.from('orbitfs_workspace_requests').insert({ workspace_id:workspace.id,request_type:'ownership',requested_by_id:fromUserId,target_user_id:target.data.id,status:'admin_pending',payload }).select('*').single();
 			if (result.error) throw result.error;
-			return json({ request:{ id:result.data.id,workspace_id:workspace.id,...payload,status:'pending',created_at:result.data.created_at } });
+			return json({ request:{ id:result.data.id,workspace_id:workspace.id,...payload,status:'admin_pending',created_at:result.data.created_at } });
 		}
 		throw Object.assign(new Error('Not found'), { status:404 });
 	} catch (error) { return fail(error); }

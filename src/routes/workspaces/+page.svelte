@@ -30,9 +30,15 @@
 	const roles = ['owner', 'editor', 'contributor', 'viewer'];
 	const editableRoles = ['editor', 'contributor', 'viewer'];
 	let fileActions = $state<string[]>(['read','write','download','move','delete','create','share']);
-	let managementActions = $state<string[]>(['view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders','ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages','delete_workspace']);
-	const coreManagementLabels: Record<string,string> = { view_settings:'View workspace settings',edit_settings:'Edit workspace settings',manage_members:'Manage members',manage_permissions:'Manage permissions',manage_library:'Manage Library / Knowledge',view_protected_folders:'View protected folders',manage_protected_folders:'Manage protected folders',ventmode_use:'Use Vent Mode',ventmode_configure:'Configure Vent Mode',ventmode_read:'View Vent Mode vents',ventmode_load:'Load Vent Mode vents',ventmode_create:'Create Vent Mode vents',ventmode_draft:'Save Vent Mode drafts',ventmode_upload:'Upload/finalise Vent Mode vents',ventmode_discard:'Discard Vent Mode working vents',ventmode_read_others:'View other users Vent Mode vents',ventmode_manage_others:'Manage other users Vent Mode vents',send_messages:'Send workspace messages',delete_workspace:'Delete workspace' };
-	let managementLabels = $state<Record<string,string>>({...coreManagementLabels});
+	let managementActions = $state<string[]>([
+		'view_settings','edit_settings','manage_members','manage_permissions','manage_library','view_protected_folders','manage_protected_folders',
+		'ventmode_use','ventmode_configure','ventmode_read','ventmode_load','ventmode_create','ventmode_draft','ventmode_upload','ventmode_discard','ventmode_read_others','ventmode_manage_others','send_messages','delete_workspace'
+	]);
+	const coreManagementLabels: Record<string, string> = {
+		view_settings:'View workspace settings', edit_settings:'Edit workspace settings', manage_members:'Manage members', manage_permissions:'Manage permissions', manage_library:'Manage Library / Knowledge',
+		view_protected_folders:'View protected folders', manage_protected_folders:'Manage protected folders', ventmode_use:'Use Vent Mode', ventmode_configure:'Configure Vent Mode', ventmode_read:'View Vent Mode vents', ventmode_load:'Load Vent Mode vents', ventmode_create:'Create Vent Mode vents', ventmode_draft:'Save Vent Mode drafts', ventmode_upload:'Upload/finalise Vent Mode vents', ventmode_discard:'Discard Vent Mode working vents', ventmode_read_others:'View other users Vent Mode vents', ventmode_manage_others:'Manage other users Vent Mode vents', send_messages:'Send workspace messages', delete_workspace:'Delete workspace'
+	};
+	let managementLabels = $state<Record<string, string>>({ ...coreManagementLabels });
 	const profileActions = [
 		'view',
 		'create',
@@ -77,11 +83,12 @@
 			create: true,
 			edit: true,
 			edit_assigned: true,
-			mcp_edit: true,
-			approve_edits: true,
+			queue_profile_commands: true,
+			approve_profile_commands: true,
 			delete: true,
 			import: true,
 			export: true,
+			repair: false,
 			manage_fields: false,
 			manage_templates: false,
 			manage_startup: false,
@@ -95,11 +102,12 @@
 			create: true,
 			edit: false,
 			edit_assigned: true,
-			mcp_edit: false,
-			approve_edits: false,
+			queue_profile_commands: true,
+			approve_profile_commands: false,
 			delete: false,
 			import: true,
 			export: false,
+			repair: false,
 			manage_fields: false,
 			manage_templates: false,
 			manage_startup: false,
@@ -113,11 +121,12 @@
 			create: false,
 			edit: false,
 			edit_assigned: false,
-			mcp_edit: false,
-			approve_edits: false,
+			queue_profile_commands: false,
+			approve_profile_commands: false,
 			delete: false,
 			import: false,
 			export: false,
+			repair: false,
 			manage_fields: false,
 			manage_templates: false,
 			manage_startup: false,
@@ -191,7 +200,9 @@
 		id: string;
 		workspace_id: string;
 		workspace_name: string;
+		from_user_id: string;
 		from_username: string;
+		target_user_id: string;
 		target_username: string;
 		message?: string;
 		status: string;
@@ -223,12 +234,15 @@
 		overrides: Record<string, Record<string, boolean>>;
 		effective: Record<string, Record<string, boolean>>;
 	};
+	type ManagementGroup = { id:string; label:string; addonId:string; attached?:boolean; permissions:string[] };
+	type ManagementCatalog = { groups:ManagementGroup[]; labels?:Record<string,string>; count:number };
 
 	let loading = $state(true);
 	let error = $state('');
 	let notice = $state('');
 	let busy = $state('');
 	let canManageGlobal = $state(false);
+	let currentUser = $state<{id:string;username:string;role:string}|null>(null);
 	let userPermissions = $state({
 		create_workspaces: true,
 		access_public_workspace: true,
@@ -247,9 +261,11 @@
 	let showTrash = $state(false);
 	let overrides = $state<FileOverride[]>([]);
 	let management = $state<ManagementResponse>({ overrides: {}, effective: {} });
+	let managementCatalog = $state<ManagementCatalog>({ groups:[], count:0 });
+	let permissionSearch = $state('');
 	let messages = $state<WorkspaceMessage[]>([]);
 	let globalSettings = $state<GlobalSettings>({
-		publicWorkspaceVisible: true,
+		publicWorkspaceVisible: false,
 		maxWorkspacesPerUser: 1,
 		inactiveBeforeOfflineDays: 30,
 		offlineWarningDays: 7,
@@ -323,9 +339,9 @@
 	const pendingStorageRequests = $derived(
 		storageRequests.filter((item) => item.status === 'pending')
 	);
-	const pendingOwnershipRequests = $derived(
-		ownershipRequests.filter((item) => item.status === 'pending')
-	);
+	const pendingOwnershipRequests = $derived(ownershipRequests.filter((item) => ['pending','admin_pending'].includes(item.status)));
+	const targetOwnershipRequests = $derived(ownershipRequests.filter((item) => item.status === 'awaiting_target' && item.target_user_id === currentUser?.id));
+	const selectedOwnershipRequests = $derived(ownershipRequests.filter((item) => item.workspace_id === selectedId && ['pending','admin_pending','awaiting_target'].includes(item.status)));
 	const transferCandidates = $derived(members.filter((member) => member.permission !== 'owner'));
 	const allowed = (action: string) =>
 		selected?.permission === 'owner' || !!selected?.management_permissions?.[action];
@@ -360,6 +376,14 @@
 			managementActions.map((action) => [action, ['ventmode_read_others','ventmode_manage_others'].includes(action) ? false : !!source[action]])
 		);
 	}
+	function visibleManagementGroups() {
+		const q=permissionSearch.trim().toLowerCase();
+		const fallback:ManagementGroup[]=[{id:'workspace',label:'Workspace permissions',addonId:'base',permissions:managementActions}];
+		return (managementCatalog.groups.length?managementCatalog.groups:fallback).map((group)=>({ ...group, permissions:group.permissions.filter((id)=>managementActions.includes(id) && (!q || `${managementLabels[id] || id} ${group.label}`.toLowerCase().includes(q))) })).filter((group)=>group.permissions.length>0);
+	}
+	function setManagementGroup(group:ManagementGroup, enabled:boolean) { managementDraft={...managementDraft,...Object.fromEntries(group.permissions.map((id)=>[id,enabled]))}; }
+	function groupOverrideCount(group:ManagementGroup) { const o=management.overrides[managementRole] || {}; return group.permissions.filter((id)=>Object.prototype.hasOwnProperty.call(o,id)).length; }
+
 	function prepareProfilePermissions(role = profileRole) {
 		profileRole = role;
 		const source = profileRoleOverrides[role] ?? profileDefaults[role] ?? {};
@@ -382,16 +406,18 @@
 			return;
 		}
 		const id = selectedId;
-		const detailData = await api.get<{
-			members: Member[]; overrides: FileOverride[]; management: ManagementResponse; messages: WorkspaceMessage[]; profile?: any;
-		}>(`/workspaces/${id}/details`);
-		members = detailData.members;
-		overrides = detailData.overrides;
-		management = detailData.management;
-		messages = detailData.messages;
+		const [memberData, overrideData, managementData, messageData] = await Promise.all([
+			api.get<{ members: Member[] }>(`/workspaces/${id}/members`),
+			api.get<{ overrides: FileOverride[] }>(`/workspaces/${id}/permission-overrides`),
+			api.get<ManagementResponse>(`/workspaces/${id}/management-permissions`),
+			api.get<{ messages: WorkspaceMessage[] }>(`/workspaces/${id}/messages`)
+		]);
+		members = memberData.members;
+		overrides = overrideData.overrides;
+		management = managementData;
+		messages = messageData.messages;
 		try {
-			const profileData = detailData.profile;
-			if (!profileData) throw new Error('Profile summary unavailable');
+			const profileData = await api.get<any>(`/profiles/${id}/catalog`);
 			profileRoleOverrides = profileData.roleOverrides ?? {};
 			profileMemberOverrides = profileData.memberOverrides ?? {};
 			profileStatistics = profileData.statistics ?? null;
@@ -420,18 +446,29 @@
 				settings: GlobalSettings;
 				canManageGlobal: boolean;
 				userPermissions: typeof userPermissions;
-				fileActions?: string[]; managementActions?: string[]; managementLabels?: Record<string,string>;
+				fileActions?: string[]; managementActions?: string[]; managementLabels?: Record<string,string>; managementCatalog?: ManagementCatalog; currentUser?: {id:string;username:string;role:string};
 			}>('/workspaces');
 			workspaces = data.workspaces;
 			globalSettings = { ...globalSettings, ...data.settings };
 			canManageGlobal = data.canManageGlobal;
+			currentUser = data.currentUser || null;
 			userPermissions = data.userPermissions;
 			if (data.fileActions?.length) fileActions = data.fileActions;
 			if (data.managementActions?.length) managementActions = data.managementActions;
 			managementLabels = { ...coreManagementLabels, ...(data.managementLabels || {}) };
-			invitations = [];
-			storageRequests = [];
-			ownershipRequests = [];
+			managementCatalog = data.managementCatalog || { groups:[], count:data.managementActions?.length || managementActions.length };
+			invitations = data.canManageGlobal
+				? (await api.get<{ invitations: WorkspaceInvitation[] }>('/workspace-invitations'))
+						.invitations
+				: [];
+			[storageRequests, ownershipRequests] = await Promise.all([
+				api
+					.get<{ requests: StorageRequest[] }>('/workspace-storage-requests')
+					.then((result) => result.requests),
+				api
+					.get<{ requests: OwnershipRequest[] }>('/workspace-ownership-requests')
+					.then((result) => result.requests)
+			]);
 			if (
 				!selectedId ||
 				!workspaces.some((item) => item.id === selectedId && canAccessWorkspace(item))
@@ -444,21 +481,6 @@
 			loading = false;
 		}
 	}
-	async function loadApprovals() {
-		if (!canManageGlobal) return;
-		try {
-			[invitations, storageRequests, ownershipRequests] = await Promise.all([
-				api.get<{ invitations: WorkspaceInvitation[] }>('/workspace-invitations').then((r) => r.invitations),
-				api.get<{ requests: StorageRequest[] }>('/workspace-storage-requests').then((r) => r.requests),
-				api.get<{ requests: OwnershipRequest[] }>('/workspace-ownership-requests').then((r) => r.requests)
-			]);
-		} catch (err) { error = messageFor(err, 'Failed to load approval queues'); }
-	}
-	async function toggleManagerPanel() {
-		showManagerPanel = !showManagerPanel;
-		if (showManagerPanel) await loadApprovals();
-	}
-
 	async function run(key: string, action: () => Promise<unknown>, reload = true) {
 		busy = key;
 		error = '';
@@ -630,10 +652,15 @@
 		transferTarget = '';
 		transferMessage = '';
 	}
+	async function setOwnerDirect() {
+		if (!selected || !canManageGlobal || selected.is_main || !settingsOwner.trim()) return;
+		await run('owner-direct', () => api.patch(`/workspaces/${selected.id}`, { ownerUsername: settingsOwner.trim() }));
+	}
 	async function respondTransfer(requestId: string, decision: 'approved' | 'denied') {
-		await run(`ownership-${requestId}`, () =>
-			api.post(`/workspace-ownership-requests/${requestId}/respond`, { decision })
-		);
+		await run(`ownership-${requestId}`, () => api.post(`/workspace-ownership-requests/${requestId}/respond`, { decision }));
+	}
+	async function respondTargetTransfer(requestId:string, decision:'accepted'|'declined') {
+		await run(`ownership-target-${requestId}`, () => api.post(`/workspace-ownership-requests/${requestId}/target-respond`, { decision }));
 	}
 	async function saveMember(member: Member) {
 		if (!selected) return;
@@ -760,7 +787,7 @@
 		<div class="grid gap-4 xl:grid-cols-[270px_minmax(0,1fr)]">
 			<aside class="space-y-3 xl:sticky xl:top-4 xl:self-start">
 				<Card>
-					<CardHeader class="pb-3"><CardTitle class="text-base">Your workspaces</CardTitle><CardDescription>{displayedWorkspaces.length} shown Ã‚Â· {workspaces.length} total</CardDescription></CardHeader>
+					<CardHeader class="pb-3"><CardTitle class="text-base">Your workspaces</CardTitle><CardDescription>{displayedWorkspaces.length} shown · {workspaces.length} total</CardDescription></CardHeader>
 					<CardContent class="space-y-2">
 						{#each displayedWorkspaces as item}
 							<button class="w-full rounded-lg border px-3 py-2.5 text-left transition {selectedId === item.id ? 'border-primary bg-primary/10' : 'border-border/70 hover:bg-muted/50'} {canAccessWorkspace(item) ? '' : 'cursor-not-allowed opacity-45'}" onclick={() => choose(item.id)} disabled={!canAccessWorkspace(item)}>
@@ -771,15 +798,16 @@
 						{#if canManageGlobal}<Button class="w-full" size="sm" variant="ghost" onclick={() => (showAllWorkspaces = !showAllWorkspaces)}>{showAllWorkspaces ? 'Show my / main only' : 'Show all workspaces'}</Button>{/if}
 					</CardContent>
 				</Card>
-				{#if canManageGlobal}<Card><CardContent class="p-3"><button class="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-muted/50" onclick={toggleManagerPanel}><span><span class="block text-sm font-medium">System administration</span><span class="block text-xs text-muted-foreground">Global defaults, approvals and lifecycle rules</span></span><Shield class="size-4 text-muted-foreground" /></button></CardContent></Card>{/if}
+				{#if canManageGlobal}<Card><CardContent class="p-3"><button class="flex w-full items-center justify-between rounded-md px-2 py-2 text-left hover:bg-muted/50" onclick={() => (showManagerPanel = !showManagerPanel)}><span><span class="block text-sm font-medium">System administration</span><span class="block text-xs text-muted-foreground">Global defaults, approvals and lifecycle rules</span></span><Shield class="size-4 text-muted-foreground" /></button></CardContent></Card>{/if}
 			</aside>
 
 			<main class="min-w-0 space-y-4">
+				{#if targetOwnershipRequests.length > 0}<Card class="border-primary/40"><CardHeader><CardTitle>Workspace ownership invitation</CardTitle><CardDescription>An admin approved an ownership transfer to you. Nothing changes until you accept.</CardDescription></CardHeader><CardContent class="space-y-3">{#each targetOwnershipRequests as request (request.id)}<div class="rounded-lg border p-3"><strong>{request.workspace_name}</strong><p class="mt-1 text-sm text-muted-foreground">{request.from_username} wants to transfer full ownership of this workspace to you.</p>{#if request.message}<p class="mt-2 text-sm">{request.message}</p>{/if}<div class="mt-3 flex flex-wrap gap-2"><Button onclick={()=>respondTargetTransfer(request.id,'accepted')}>Accept ownership</Button><Button variant="outline" onclick={()=>respondTargetTransfer(request.id,'declined')}>Decline</Button></div></div>{/each}</CardContent></Card>{/if}
 				{#if canManageGlobal && showManagerPanel}
 					<Card class="border-primary/30"><CardHeader><div class="flex items-start justify-between gap-3"><div><CardTitle>System Administration</CardTitle><CardDescription>Global Workspaces settings and approval queues. These settings are not part of the selected workspace.</CardDescription></div><Button size="sm" variant="ghost" onclick={() => (showManagerPanel = false)}>Close</Button></div></CardHeader><CardContent class="space-y-4">
-						<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Hiding removes it from normal non-admin workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only Ã¢â‚¬â€ APEX is restricted to system owner/admin.' : 'Normal Ã¢â‚¬â€ workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div></div>
+						<div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"><label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Non-admins can only read it; hiding removes it from normal workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div></div>
 						<div class="flex flex-wrap gap-2"><Button onclick={saveGlobal} disabled={busy === 'global'}>Save global Workspaces settings</Button><Badge variant="outline">{pendingInvitations.length} member approvals</Badge><Badge variant="outline">{pendingStorageRequests.length} quota approvals</Badge><Badge variant="outline">{pendingOwnershipRequests.length} ownership approvals</Badge></div>
-						<div class="grid gap-3 xl:grid-cols-3"><div class="rounded-lg border p-3"><p class="font-medium">Member approvals</p>{#each pendingInvitations as invitation (invitation.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{invitation.username} Ã¢â€ â€™ {invitation.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondInvitation(invitation.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondInvitation(invitation.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingInvitations.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Quota approvals</p>{#each pendingStorageRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondQuota(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondQuota(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingStorageRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Ownership approvals</p>{#each pendingOwnershipRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}: {request.from_username} Ã¢â€ â€™ {request.target_username}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondTransfer(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondTransfer(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingOwnershipRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div></div>
+						<div class="grid gap-3 xl:grid-cols-3"><div class="rounded-lg border p-3"><p class="font-medium">Member approvals</p>{#each pendingInvitations as invitation (invitation.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{invitation.username} → {invitation.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondInvitation(invitation.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondInvitation(invitation.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingInvitations.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Quota approvals</p>{#each pendingStorageRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondQuota(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondQuota(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingStorageRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div><div class="rounded-lg border p-3"><p class="font-medium">Ownership approvals</p>{#each pendingOwnershipRequests as request (request.id)}<div class="mt-2 rounded-md border p-2"><p class="text-sm">{request.workspace_name}: {request.from_username} → {request.target_username}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondTransfer(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondTransfer(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingOwnershipRequests.length === 0}<p class="mt-2 text-sm text-muted-foreground">No pending requests.</p>{/if}</div></div>
 					</CardContent></Card>
 				{/if}
 				{#if selected}
@@ -800,11 +828,11 @@
 						</CardContent>
 					</Card>
 
-					<div class="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
-						{#each [['overview','Overview'],['profiles','Profiles'],['members','Members'],['permissions','Permissions'],['storage','Storage'],['settings','Settings'],['activity','Activity'],['mcp','MCP / APEX']] as item}
-							<button class="rounded-lg border px-3 py-2 text-sm font-medium transition {tab === item[0] ? 'border-primary bg-primary text-primary-foreground' : 'border-border/70 bg-card hover:bg-muted/50'}" onclick={() => (tab = item[0] as typeof tab)}>{item[1]}</button>
+					<div class="-mx-1 overflow-x-auto px-1 pb-1"><div class="flex min-w-max gap-2">
+						{#each [['overview','Overview'],['members','People'],['permissions','Permissions'],['profiles','Profiles'],['storage','Storage'],['settings','Setup'],['mcp','Integrations'],['activity','Activity']] as item}
+							<button class="shrink-0 rounded-lg border px-4 py-2 text-sm font-medium transition {tab === item[0] ? 'border-primary bg-primary text-primary-foreground' : 'border-border/70 bg-card hover:bg-muted/50'}" onclick={() => (tab = item[0] as typeof tab)}>{item[1]}</button>
 						{/each}
-					</div>
+					</div></div>
 
 					{#if tab === 'overview'}
 						<div class="grid gap-4 lg:grid-cols-3">
@@ -814,11 +842,14 @@
 								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Files / folders</p><p class="mt-1 font-medium">{selected.file_count ?? 0} / {selected.folder_count ?? 0}</p></div>
 								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Profile storage</p><p class="mt-1 font-medium">{formatBytes(selected.profile_storage_used_bytes ?? 0)}</p><p class="text-xs text-muted-foreground">Excluded from normal quota</p></div>
 							</CardContent></Card>
-							<Card><CardHeader><CardTitle>Quick actions</CardTitle><CardDescription>Common workspace controls.</CardDescription></CardHeader><CardContent class="grid gap-2">
-								<Button variant="outline" onclick={openSelected}>Open files</Button>
-								<Button variant="outline" onclick={() => (tab = 'members')}>Manage members</Button>
-								<Button variant="outline" onclick={() => (tab = 'permissions')}>Review permissions</Button>
-								<Button variant="outline" onclick={() => (tab = 'settings')}>Workspace settings</Button>
+							<Card><CardHeader><CardTitle>Workspace setup</CardTitle><CardDescription>At-a-glance setup state and common controls.</CardDescription></CardHeader><CardContent class="space-y-2">
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>Owner</span><Badge variant={selected.is_public || selected.owner_username ? 'success' : 'secondary'}>{selected.is_public ? 'Public' : (selected.owner_username || 'Missing')}</Badge></div>
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>Members</span><Badge variant="outline">{members.length}</Badge></div>
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>Profiles</span><Badge variant={profilePermissionsReady ? 'success' : 'secondary'}>{profilePermissionsReady ? `${profileStatistics?.profileCount ?? 0} ready` : 'Unavailable'}</Badge></div>
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>Studio</span><Badge variant={managementCatalog.groups.some((g)=>g.addonId==='studio' && g.attached!==false) ? 'success' : 'secondary'}>{managementCatalog.groups.some((g)=>g.addonId==='studio' && g.attached!==false) ? 'Attached' : 'Not attached'}</Badge></div>
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>MCP</span><Badge variant={selected.mcp_system_enabled !== false && selected.mcp_ui_enabled ? 'success' : 'secondary'}>{selected.mcp_system_enabled === false ? 'Blocked' : selected.mcp_ui_enabled ? 'Enabled' : 'Disabled'}</Badge></div>
+								<div class="flex items-center justify-between rounded-lg border p-2 text-sm"><span>APEX</span><Badge variant={selected.apex_system_enabled === false ? 'secondary' : 'success'}>{selected.apex_system_enabled === false ? 'Blocked' : 'Allowed'}</Badge></div>
+								<div class="grid grid-cols-2 gap-2 pt-1"><Button size="sm" variant="outline" onclick={() => (tab = 'members')}>People</Button><Button size="sm" variant="outline" onclick={() => (tab = 'permissions')}>Permissions</Button><Button size="sm" variant="outline" onclick={() => (tab = 'settings')}>Setup</Button><Button size="sm" variant="outline" onclick={() => (tab = 'mcp')}>Integrations</Button></div>
 							</CardContent></Card>
 						</div>
 
@@ -877,18 +908,21 @@
 								</CardContent></Card>
 
 							{:else if permissionTab === 'workspace'}
-								<Card><CardHeader><CardTitle>Workspace permissions</CardTitle><CardDescription>Controls workspace administration, protected folders, MCP and Sorter access.</CardDescription></CardHeader><CardContent class="space-y-4">
-									<div class="flex flex-wrap gap-2">{#each editableRoles as role}<Button size="sm" variant={managementRole === role ? 'default' : 'outline'} onclick={() => prepareManagement(role)}>{role}</Button>{/each}</div>
-									<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{#each managementActions.filter((action) => !['ventmode_configure','ventmode_read_others','ventmode_manage_others'].includes(action)) as action}<label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-0.5" type="checkbox" bind:checked={managementDraft[action]} /><span>{managementLabels[action] || action}</span></label>{/each}</div>
-					<p class="text-xs text-muted-foreground">Vent Mode setup/configuration and cross-user Vent Mode access are reserved for System Owner/Admin and the Workspace Owner.</p>
-									<div class="flex gap-2"><Button onclick={saveManagement} disabled={!allowed('manage_permissions')}>Save workspace permissions</Button><Button variant="outline" onclick={resetManagement} disabled={!allowed('manage_permissions')}>Reset role</Button></div>
+								<Card><CardHeader><div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"><div><CardTitle>Workspace & addon permissions</CardTitle><CardDescription>Every installed Base/addon workspace capability is listed here automatically. Changes apply to the selected workspace role.</CardDescription></div><Badge variant="outline">{managementCatalog.count || managementActions.length} permissions</Badge></div></CardHeader><CardContent class="space-y-4">
+									<div class="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between"><div class="flex flex-wrap gap-2">{#each editableRoles as role}<Button size="sm" variant={managementRole === role ? 'default' : 'outline'} onclick={() => prepareManagement(role)}>{role}</Button>{/each}</div><div class="w-full lg:max-w-sm"><Input bind:value={permissionSearch} placeholder="Search permissions or systems…" /></div></div>
+									<div class="space-y-3">{#each visibleManagementGroups() as group (group.id)}
+										<div class="rounded-xl border p-3 sm:p-4"><div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><div class="min-w-0"><div class="flex flex-wrap items-center gap-2"><strong>{group.label}</strong>{#if group.addonId !== 'base'}<Badge variant="outline">addon</Badge>{/if}{#if group.attached === false}<Badge variant="secondary">detached</Badge>{/if}{#if groupOverrideCount(group)}<Badge variant="outline">{groupOverrideCount(group)} custom</Badge>{/if}</div><p class="mt-1 text-xs text-muted-foreground">{group.permissions.length} permission{group.permissions.length === 1 ? '' : 's'}</p></div><div class="flex flex-wrap gap-2"><Button size="sm" variant="outline" onclick={() => setManagementGroup(group,true)}>Enable all</Button><Button size="sm" variant="outline" onclick={() => setManagementGroup(group,false)}>Disable all</Button></div></div>
+										<div class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">{#each group.permissions as action}<label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-0.5" type="checkbox" bind:checked={managementDraft[action]} disabled={['ventmode_configure','ventmode_read_others','ventmode_manage_others'].includes(action) && managementRole !== 'owner'} /><span class="min-w-0"><span class="block">{managementLabels[action] || action}</span>{#if ['ventmode_configure','ventmode_read_others','ventmode_manage_others'].includes(action)}<span class="block text-[11px] text-muted-foreground">Workspace Owner / System Admin only</span>{/if}<code class="mt-1 block break-all text-[10px] text-muted-foreground">{action}</code></span></label>{/each}</div>
+										</div>
+									{/each}</div>
+									<div class="sticky bottom-2 flex flex-wrap gap-2 rounded-xl border bg-card/95 p-3 shadow-sm backdrop-blur"><Button onclick={saveManagement} disabled={!allowed('manage_permissions')}>Save {managementRole} permissions</Button><Button variant="outline" onclick={resetManagement} disabled={!allowed('manage_permissions')}>Reset role to defaults</Button><span class="self-center text-xs text-muted-foreground">Role overrides affect this workspace only.</span></div>
 								</CardContent></Card>
 							{:else}
 								<Card><CardHeader><CardTitle>Profile permissions</CardTitle><CardDescription>These permissions control the Profiles page and profile APIs only. They do not grant raw <code>_system</code> file access.</CardDescription></CardHeader><CardContent class="space-y-4">
 									<div class="flex flex-wrap gap-2">{#each editableRoles as role}<Button size="sm" variant={profileRole === role ? 'default' : 'outline'} onclick={() => prepareProfilePermissions(role)}>{role}</Button>{/each}</div>
 									<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{#each profileActions as action}<label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-0.5" type="checkbox" bind:checked={profileDraft[action]} /><span>{profileLabels[action] || action}</span></label>{/each}</div>
 									<div class="flex gap-2"><Button onclick={saveProfileAccess} disabled={!profilePermissionsReady}>Save profile permissions</Button><Button variant="outline" onclick={resetProfileAccess} disabled={!profilePermissionsReady}>Reset role</Button></div>
-					{#if members.length}<div class="border-t pt-4 space-y-3"><h3 class="font-medium">Member-specific profile permissions</h3><select class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={profileMemberId} onchange={() => prepareProfileMember(profileMemberId)}>{#each members as member}<option value={member.user_id}>{member.username} Ãƒâ€šÃ‚Â· {member.permission}</option>{/each}</select><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{#each profileActions as action}<label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-0.5" type="checkbox" bind:checked={profileMemberDraft[action]} /><span>{profileLabels[action] || action}</span></label>{/each}</div><div class="flex gap-2"><Button onclick={saveProfileMemberAccess} disabled={!profilePermissionsReady || !profileMemberId}>Save member override</Button><Button variant="outline" onclick={resetProfileMemberAccess} disabled={!profilePermissionsReady || !profileMemberId}>Reset member</Button></div></div>{/if}
+					{#if members.length}<div class="border-t pt-4 space-y-3"><h3 class="font-medium">Member-specific profile permissions</h3><select class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={profileMemberId} onchange={() => prepareProfileMember(profileMemberId)}>{#each members as member}<option value={member.user_id}>{member.username} Â· {member.permission}</option>{/each}</select><div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{#each profileActions as action}<label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-0.5" type="checkbox" bind:checked={profileMemberDraft[action]} /><span>{profileLabels[action] || action}</span></label>{/each}</div><div class="flex gap-2"><Button onclick={saveProfileMemberAccess} disabled={!profilePermissionsReady || !profileMemberId}>Save member override</Button><Button variant="outline" onclick={resetProfileMemberAccess} disabled={!profilePermissionsReady || !profileMemberId}>Reset member</Button></div></div>{/if}
 								</CardContent></Card>
 							{/if}
 						</div>
@@ -918,8 +952,10 @@
 								<Button onclick={saveWorkspace} disabled={!allowed('edit_settings') && !canManageGlobal}>Save workspace settings</Button>
 							</CardContent></Card>
 
-							<Card><CardHeader><CardTitle>Ownership and lifecycle</CardTitle><CardDescription>Owner transfer and administrative lifecycle controls.</CardDescription></CardHeader><CardContent class="space-y-4">
-								{#if transferCandidates.length > 0}<div class="grid gap-3"><label class="space-y-1 text-sm"><span>Transfer ownership to</span><select class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={transferTarget}><option value="">Select member</option>{#each transferCandidates as member}<option value={member.username}>{member.username}</option>{/each}</select></label><label class="space-y-1 text-sm"><span>Message</span><Input bind:value={transferMessage} placeholder="Optional transfer note" /></label><Button variant="outline" onclick={requestTransfer} disabled={!transferTarget}>Request ownership transfer</Button></div>{/if}
+							<Card><CardHeader><CardTitle>Ownership and lifecycle</CardTitle><CardDescription>Workspace owners can request a transfer. System Owner/Admin can directly set the owner.</CardDescription></CardHeader><CardContent class="space-y-4">
+								<div class="rounded-lg border p-3"><p class="text-xs text-muted-foreground">Current owner</p><p class="mt-1 font-medium">{selected.is_public ? 'No owner' : (selected.owner_username || 'Unassigned')}</p></div>
+								{#if !selected.is_main && (selected.permission === 'owner' || canManageGlobal)}<div class="grid gap-3 rounded-lg border p-3"><div><p class="font-medium">Transfer ownership</p><p class="text-xs text-muted-foreground">Enter any existing OrbitFS username. The user does not need to already be a workspace member.</p></div><label class="space-y-1 text-sm"><span>New owner username</span><Input bind:value={transferTarget} placeholder="Username" /></label>{#if transferCandidates.length > 0}<div class="flex flex-wrap gap-2">{#each transferCandidates as member}<Button size="sm" variant="outline" onclick={() => (transferTarget = member.username)}>{member.username}</Button>{/each}</div>{/if}<label class="space-y-1 text-sm"><span>Message</span><Input bind:value={transferMessage} placeholder="Optional transfer note" /></label><Button variant="outline" onclick={requestTransfer} disabled={!transferTarget.trim() || selectedOwnershipRequests.length > 0}>Request ownership transfer</Button>{#if selectedOwnershipRequests.length > 0}<p class="text-xs text-amber-500">A transfer is already pending for this workspace.</p>{:else}<p class="text-xs text-muted-foreground">Request flow: System Owner/Admin approval → new owner accepts or declines.</p>{/if}</div>{/if}
+								{#if canManageGlobal && !selected.is_main}<div class="grid gap-3 rounded-lg border border-primary/30 p-3"><div><p class="font-medium">Admin: set workspace owner</p><p class="text-xs text-muted-foreground">Immediately changes ownership to an existing OrbitFS user and clears any pending transfer for this workspace.</p></div><label class="space-y-1 text-sm"><span>Owner username</span><Input bind:value={settingsOwner} placeholder="Username" /></label><Button onclick={setOwnerDirect} disabled={!settingsOwner.trim() || settingsOwner.trim().toLowerCase() === (selected.owner_username || '').toLowerCase() || busy === 'owner-direct'}>Set owner now</Button></div>{/if}
 								{#if canManageGlobal}<div class="space-y-3 border-t pt-4"><label class="flex items-start gap-2 rounded-lg border p-3 text-sm"><input class="mt-1" type="checkbox" bind:checked={settingsAutoDeleteImmune} /><span><strong>Auto-delete immune</strong><span class="block text-xs text-muted-foreground">Workspace may go offline but lifecycle cleanup cannot delete it automatically.</span></span></label><label class="space-y-1 text-sm"><span>Status</span><select class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={settingsStatus}><option value="active">active</option><option value="offline">offline</option><option value="suspended">suspended</option></select></label><label class="space-y-1 text-sm"><span>Offline message</span><Input bind:value={offlineMessage} /></label><label class="space-y-1 text-sm"><span>Suspension reason</span><Input bind:value={suspensionReason} /></label><div class="flex flex-wrap gap-2"><Button variant="outline" onclick={setOffline}>{selected.status === 'offline' ? 'Bring online' : 'Take offline'}</Button></div></div>{/if}
 							</CardContent></Card>
 						</div>
@@ -937,14 +973,14 @@
 										<div class="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"><span><strong>Workspace APEX</strong><span class="block text-xs text-muted-foreground">{selected.apex_system_enabled === false ? 'Blocked for this workspace by system owner/admin.' : 'Allowed for this workspace.'}</span></span><Badge variant={selected.apex_system_enabled === false ? 'destructive' : 'success'}>{selected.apex_system_enabled === false ? 'Blocked' : 'Allowed'}</Badge></div>
 										{#if canManageGlobal}<Button size="sm" variant={selected.apex_system_enabled === false ? 'outline' : 'destructive'} onclick={toggleApexSystem} disabled={busy === 'apex-system'}>{selected.apex_system_enabled === false ? 'Allow Workspace APEX' : 'Block Workspace APEX'}</Button>{/if}</div>
 								</div>
-								<div class="mt-3 rounded-lg border bg-muted/10 p-3 text-xs text-muted-foreground">MCP: system gate Ã¢â€ â€™ workspace switch Ã¢â€ â€™ member permissions. APEX: global mode Ã¢â€ â€™ workspace gate Ã¢â€ â€™ role/permission checks.</div>
+								<div class="mt-3 rounded-lg border bg-muted/10 p-3 text-xs text-muted-foreground">MCP: system gate → workspace switch → member permissions. APEX: global mode → workspace gate → role/permission checks.</div>
 							</CardContent></Card>
 						</div>
 
 					{:else if tab === 'activity'}
 						<div class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
 							<Card><CardHeader><CardTitle>Workspace activity</CardTitle><CardDescription>Workspace messages and administrative notes.</CardDescription></CardHeader><CardContent class="space-y-2">
-								{#each messages as message (message.id)}<div class="rounded-lg border p-3"><div class="flex flex-wrap items-center justify-between gap-2"><strong>{message.title}</strong><Badge variant="outline">{message.severity}</Badge></div><p class="mt-2 text-sm">{message.message}</p><p class="mt-2 text-xs text-muted-foreground">{message.created_by} Ã‚Â· {message.created_at}</p></div>{/each}
+								{#each messages as message (message.id)}<div class="rounded-lg border p-3"><div class="flex flex-wrap items-center justify-between gap-2"><strong>{message.title}</strong><Badge variant="outline">{message.severity}</Badge></div><p class="mt-2 text-sm">{message.message}</p><p class="mt-2 text-xs text-muted-foreground">{message.created_by} · {message.created_at}</p></div>{/each}
 								{#if messages.length === 0}<p class="rounded-lg border border-dashed p-5 text-sm text-muted-foreground">No workspace activity messages yet.</p>{/if}
 							</CardContent></Card>
 							{#if allowed('send_messages')}<Card><CardHeader><CardTitle>Post message</CardTitle><CardDescription>Send an administrative message to this workspace.</CardDescription></CardHeader><CardContent class="space-y-3"><label class="space-y-1 text-sm"><span>Title</span><Input bind:value={messageTitle} /></label><label class="space-y-1 text-sm"><span>Message</span><textarea class="min-h-28 w-full rounded-md border border-input bg-background p-3 text-sm" bind:value={messageBody}></textarea></label><label class="space-y-1 text-sm"><span>Severity</span><select class="h-9 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={messageSeverity}><option value="info">Info</option><option value="warning">Warning</option><option value="critical">Critical</option></select></label><Button onclick={sendMessage}>Post message</Button></CardContent></Card>{/if}
@@ -954,14 +990,14 @@
 						<div class="space-y-4">
 							<Card><CardHeader><CardTitle>System workspace defaults</CardTitle><CardDescription>Global limits and lifecycle rules for the built-in Workspaces system.</CardDescription></CardHeader><CardContent class="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
 								<label class="space-y-1 text-sm"><span>Max workspaces per user</span><Input type="number" min="0" bind:value={globalSettings.maxWorkspacesPerUser} /></label><label class="space-y-1 text-sm"><span>Inactive before offline (days)</span><Input type="number" min="0" bind:value={globalSettings.inactiveBeforeOfflineDays} /></label><label class="space-y-1 text-sm"><span>Offline warning (days)</span><Input type="number" min="0" bind:value={globalSettings.offlineWarningDays} /></label><label class="space-y-1 text-sm"><span>Delete after offline (days)</span><Input type="number" min="0" bind:value={globalSettings.deleteAfterOfflineDays} /></label>
-								<label class="space-y-1 text-sm"><span>Deletion warning (days)</span><Input type="number" min="0" bind:value={globalSettings.deletionWarningDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><label class="space-y-1 text-sm"><span>Default profile size (MB)</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfileSizeMB} /></label><label class="space-y-1 text-sm"><span>Total profile allowance (MB)</span><Input type="number" min="0" bind:value={globalSettings.defaultMaxTotalProfileStorageMB} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Hiding removes it from normal non-admin workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only Ã¢â‚¬â€ APEX is restricted to system owner/admin.' : 'Normal Ã¢â‚¬â€ workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div>
+								<label class="space-y-1 text-sm"><span>Deletion warning (days)</span><Input type="number" min="0" bind:value={globalSettings.deletionWarningDays} /></label><label class="space-y-1 text-sm"><span>Default profiles</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfiles} /></label><label class="space-y-1 text-sm"><span>Default profile size (MB)</span><Input type="number" min="1" bind:value={globalSettings.defaultMaxProfileSizeMB} /></label><label class="space-y-1 text-sm"><span>Total profile allowance (MB)</span><Input type="number" min="0" bind:value={globalSettings.defaultMaxTotalProfileStorageMB} /></label><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Show Public Workspace</span><span class="block text-xs text-muted-foreground">Ownerless shared workspace. Non-admins can only read it; hiding removes it from normal workspace lists.</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.publicWorkspaceVisible ? 'success' : 'secondary'}>{globalSettings.publicWorkspaceVisible ? 'Shown' : 'Hidden'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" bind:checked={globalSettings.publicWorkspaceVisible} /></span></label></div><div class="rounded-lg border p-3 text-sm sm:col-span-2 xl:col-span-4"><label class="flex items-center justify-between gap-3"><span><span class="block font-medium">Global APEX workspace access</span><span class="block text-xs text-muted-foreground">{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only — APEX is restricted to system owner/admin.' : 'Normal — workspace owners can access APEX for their workspace.'}</span></span><span class="flex items-center gap-3"><Badge variant={globalSettings.apexAccessMode === 'admins_only' ? 'secondary' : 'success'}>{globalSettings.apexAccessMode === 'admins_only' ? 'Admins only' : 'Normal'}</Badge><input class="h-5 w-5 accent-primary" type="checkbox" checked={globalSettings.apexAccessMode !== 'admins_only'} onchange={(event) => setApexWorkspaceAccess(event.currentTarget.checked)} /></span></label></div>
 								<div class="md:col-span-2 xl:col-span-4"><Button onclick={saveGlobal} disabled={busy === 'global'}>Save global defaults</Button></div>
 							</CardContent></Card>
 
 							<div class="grid gap-4 xl:grid-cols-3">
-								<Card><CardHeader><CardTitle>Member approvals</CardTitle><CardDescription>{pendingInvitations.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingInvitations as invitation (invitation.id)}<div class="rounded-lg border p-3"><strong>{invitation.username}</strong><p class="text-xs text-muted-foreground">{invitation.workspace_name} Ã‚Â· {invitation.permission}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondInvitation(invitation.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondInvitation(invitation.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingInvitations.length === 0}<p class="text-sm text-muted-foreground">No pending member approvals.</p>{/if}</CardContent></Card>
-								<Card><CardHeader><CardTitle>Quota approvals</CardTitle><CardDescription>{pendingStorageRequests.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingStorageRequests as request (request.id)}<div class="rounded-lg border p-3"><strong>{request.workspace_name}</strong><p class="text-xs text-muted-foreground">{formatBytes(request.current_quota_bytes)} Ã¢â€ â€™ {formatBytes(request.requested_quota_bytes)}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondQuota(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondQuota(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingStorageRequests.length === 0}<p class="text-sm text-muted-foreground">No pending quota requests.</p>{/if}</CardContent></Card>
-								<Card><CardHeader><CardTitle>Ownership approvals</CardTitle><CardDescription>{pendingOwnershipRequests.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingOwnershipRequests as request (request.id)}<div class="rounded-lg border p-3"><strong>{request.workspace_name}</strong><p class="text-xs text-muted-foreground">{request.from_username} Ã¢â€ â€™ {request.target_username}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondTransfer(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondTransfer(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingOwnershipRequests.length === 0}<p class="text-sm text-muted-foreground">No pending ownership transfers.</p>{/if}</CardContent></Card>
+								<Card><CardHeader><CardTitle>Member approvals</CardTitle><CardDescription>{pendingInvitations.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingInvitations as invitation (invitation.id)}<div class="rounded-lg border p-3"><strong>{invitation.username}</strong><p class="text-xs text-muted-foreground">{invitation.workspace_name} · {invitation.permission}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondInvitation(invitation.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondInvitation(invitation.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingInvitations.length === 0}<p class="text-sm text-muted-foreground">No pending member approvals.</p>{/if}</CardContent></Card>
+								<Card><CardHeader><CardTitle>Quota approvals</CardTitle><CardDescription>{pendingStorageRequests.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingStorageRequests as request (request.id)}<div class="rounded-lg border p-3"><strong>{request.workspace_name}</strong><p class="text-xs text-muted-foreground">{formatBytes(request.current_quota_bytes)} → {formatBytes(request.requested_quota_bytes)}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondQuota(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondQuota(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingStorageRequests.length === 0}<p class="text-sm text-muted-foreground">No pending quota requests.</p>{/if}</CardContent></Card>
+								<Card><CardHeader><CardTitle>Ownership approvals</CardTitle><CardDescription>{pendingOwnershipRequests.length} pending</CardDescription></CardHeader><CardContent class="space-y-2">{#each pendingOwnershipRequests as request (request.id)}<div class="rounded-lg border p-3"><strong>{request.workspace_name}</strong><p class="text-xs text-muted-foreground">{request.from_username} → {request.target_username}</p><div class="mt-2 flex gap-2"><Button size="sm" onclick={() => respondTransfer(request.id,'approved')}>Approve</Button><Button size="sm" variant="outline" onclick={() => respondTransfer(request.id,'denied')}>Deny</Button></div></div>{/each}{#if pendingOwnershipRequests.length === 0}<p class="text-sm text-muted-foreground">No pending ownership transfers.</p>{/if}</CardContent></Card>
 							</div>
 							<Card class="border-destructive/30"><CardHeader><CardTitle>Danger zone</CardTitle><CardDescription>Destructive workspace operations remain recoverable through system trash where supported.</CardDescription></CardHeader><CardContent><Button variant="outline" class="text-destructive" onclick={deleteWorkspace} disabled={selected.delete_protected || !allowed('delete_workspace')}>Delete workspace</Button></CardContent></Card>
 						</div>
