@@ -1,9 +1,9 @@
 // @ts-nocheck
 import crypto from 'node:crypto';
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { findEntry, permissionsForPath, readEntryBytes, normalizePath } from '$lib/server/base-compat';
+import { findEntry, permissionsForPath, readEntryBytes, writeFileBytes, normalizePath } from '$lib/server/base-compat';
 import { getWorkspace, managementPermissions, requireWorkspaceAccess, workspaceMembers, workspaceRole } from '$lib/server/workspaces';
-import { profileCatalog } from '$lib/server/workspace-profiles.js';
+import { profileCatalog, profileKnowledgeProjection, updateProfile } from '$lib/server/workspace-profiles.js';
 import { buildKnowledgeIntelligence, buildFactRelations, factRelationLinks, retrievalIntelligenceBoost } from '$lib/server/knowledge-intelligence.js';
 import { buildStructuredRecords } from '$lib/server/knowledge-structure.js';
 import type { OrbitUser } from '$lib/server/auth';
@@ -30,6 +30,16 @@ const roleIds=new Set(LIBRARY_ROLES.map(x=>x.id));
 const lifecycleIds=new Set<string>(LIBRARY_LIFECYCLES as readonly string[]);
 const roles=(value:any)=>list(value).map((x:any)=>String(x).toLowerCase().replace(/[^a-z0-9_-]+/g,'_')).filter((x:any)=>roleIds.has(x));
 const lifecycle=(value:any)=>lifecycleIds.has(String(value||'').toLowerCase())?String(value).toLowerCase():'unclassified';
+export const LIBRARY_LIFECYCLE_DEFINITIONS = [
+  {id:'unclassified',label:'Unclassified',writable:true,description:'Not classified yet.'},
+  {id:'current',label:'Current',writable:true,description:'Current authoritative knowledge.'},
+  {id:'final_locked',label:'Final / locked',writable:false,description:'Final reference content; changes require a new revision or target.'},
+  {id:'old',label:'Old',writable:false,description:'Older retained material.'},
+  {id:'draft',label:'Draft',writable:true,description:'Work in progress.'},
+  {id:'archived',label:'Archived',writable:false,description:'Archived material retained for history.'},
+  {id:'reference_only',label:'Reference only',writable:false,description:'Reference material, not an update target.'},
+  {id:'deprecated',label:'Deprecated',writable:false,description:'Deprecated knowledge; do not load or target by default.'}
+] as const;
 
 function blank(workspaceId:string) {
 	return { version:8, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], createdAt:now(), updatedAt:now() } as any;
@@ -41,6 +51,7 @@ export async function readLibrary(workspaceId:string) {
 	if(r.error) throw r.error;
 	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:8};
 	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= [];
+	for(const item of state.items||[]){ item.lifecycleState=lifecycle(item.lifecycleState ?? item.lifecycle); item.lifecycle=item.lifecycleState; item.roles=roles(item.roles); }
 	state.updatedAt=r.data?.updated_at || state.updatedAt;
 	return state;
 }
@@ -59,7 +70,7 @@ export async function libraryContext(user:OrbitUser,workspaceId:string) {
 export async function presentLibrary(user:OrbitUser,workspaceId:string) {
 	const [state,ctx]=await Promise.all([readLibrary(workspaceId),libraryContext(user,workspaceId)]);
 	const stats={ items:state.items.length, collections:state.collections.length, groups:state.groups.length, categories:state.categories.length, links:state.links.length, sections:state.sections.length, events:state.events.length, records:state.records.length, facts:state.facts.length, relations:state.factRelations.length, changeRequests:state.changeRequests.length };
-	return {...state,canManage:ctx.canManage,members:ctx.members,stats};
+	return {...state,roleDefinitions:LIBRARY_ROLES,lifecycleDefinitions:LIBRARY_LIFECYCLE_DEFINITIONS,canManage:ctx.canManage,members:ctx.members,stats};
 }
 
 function requireManage(canManage:boolean) {
@@ -71,7 +82,7 @@ export async function createLibraryItem(user:OrbitUser,workspaceId:string,input:
 	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:provider==='library.native'?{documentId:text(input.documentId||crypto.randomUUID(),160)}:{path:normalizePath(input.path),sourceKind:text(input.sourceKind||'file',32)});
 	const key=`${provider}:${JSON.stringify(locator)}`; const existing=state.items.find((x:any)=>`${x.source?.provider}:${JSON.stringify(x.source?.locator||{})}`===key);
 	if(existing) return {item:existing,existing:true};
-	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':provider==='library.native'?'document':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId || 'Untitled document',180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},content:provider==='library.native'?String(input.content||''):undefined,contentFormat:provider==='library.native'?text(input.contentFormat||'markdown',32):undefined,source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
+	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':provider==='library.native'?'document':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId || 'Untitled document',180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycleState ?? input.lifecycle),lifecycleState:lifecycle(input.lifecycleState ?? input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},content:provider==='library.native'?String(input.content||''):undefined,contentFormat:provider==='library.native'?text(input.contentFormat||'markdown',32):undefined,source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
 	state.items.push(item); await saveLibrary(workspaceId,state); return {item,existing:false};
 }
 
@@ -80,7 +91,7 @@ export async function updateLibraryItem(user:OrbitUser,workspaceId:string,id:str
 	if(!item) throw Object.assign(new Error('Knowledge item not found'),{status:404});
 	for(const key of ['name','description','category','status','visibility','versionLabel']) if(input[key]!==undefined) item[key]=text(input[key],key==='description'?1000:180);
 	for(const key of ['tags','purposes','aliases']) if(input[key]!==undefined) item[key]=list(input[key]);
-	if(input.roles!==undefined) item.roles=roles(input.roles); if(input.lifecycle!==undefined) item.lifecycle=lifecycle(input.lifecycle);
+	if(input.roles!==undefined) item.roles=roles(input.roles); if(input.lifecycle!==undefined || input.lifecycleState!==undefined){ item.lifecycle=lifecycle(input.lifecycleState ?? input.lifecycle); item.lifecycleState=item.lifecycle; }
 	for(const key of ['importance','viewerIds','editorIds','guards','metadata']) if(input[key]!==undefined) item[key]=input[key];
 	if(item.source?.provider==='library.native'&&input.content!==undefined) item.content=String(input.content); if(item.source?.provider==='library.native'&&input.contentFormat!==undefined)item.contentFormat=text(input.contentFormat,32);
 	item.updatedAt=now(); item.updatedBy=user.username; await saveLibrary(workspaceId,state); return {item};
@@ -178,4 +189,105 @@ export async function importLibrary(user:OrbitUser,workspaceId:string,pack:any) 
 }
 export async function deleteUsage(user:OrbitUser,workspaceId:string,id:string) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const before=state.usage.length; state.usage=state.usage.filter((x:any)=>x.id!==id); if(before===state.usage.length)throw Object.assign(new Error('Usage record not found'),{status:404}); await saveLibrary(workspaceId,state); return {deleted:true,id};
+}
+
+function approvalSummary(request:any){return JSON.parse(JSON.stringify(request));}
+function recordMarkdown(raw:any){
+  const lines=[`\n\n## ${text(raw.title||raw.type||'Record',240)}`];
+  if(raw.date)lines.push(`- Date: ${text(raw.date,60)}`);
+  if(raw.category)lines.push(`- Category: ${text(raw.category,120)}`);
+  if(raw.content)lines.push('',String(raw.content).trim());
+  return lines.join('\n')+'\n';
+}
+function writableLifecycle(item:any){return ['current','draft','unclassified'].includes(String(item?.lifecycleState||item?.lifecycle||'unclassified'));}
+function canonicalRoleTarget(state:any,role:string){
+  const matches=(state.items||[]).filter((item:any)=>item.status==='active'&&writableLifecycle(item)&&(item.roles||[]).includes(role));
+  return matches.length===1?matches[0]:null;
+}
+async function itemContent(workspaceId:string,item:any){
+  if(item.source?.provider==='library.native')return String(item.content||'');
+  if(item.source?.provider==='base.files')return (await readEntryBytes(workspaceId,normalizePath(item.source?.locator?.path||''))).toString('utf8');
+  throw Object.assign(new Error('Selected Library target is not writable content'),{status:409,code:'KNOWLEDGE_TARGET_NOT_WRITABLE'});
+}
+async function prepareApprovalOperation(user:OrbitUser,workspaceId:string,state:any,raw:any,order:number){
+  const operation:any={id:uid('op'),order,type:text(raw.type,80),input:JSON.parse(JSON.stringify(raw||{})),status:'pending'};
+  if(operation.type==='profile_record_add'){
+    const profileId=text(raw.profileId,160),sectionId=text(raw.sectionId||'records',120);
+    if(!profileId){operation.status='needs_target';operation.target={system:'profile',profileId:null,sectionId};return operation;}
+    const ctx=await libraryContext(user,workspaceId),projection=await profileKnowledgeProjection(workspaceId,profileId,ctx.role,user.id,user.role),profile=projection.profile;
+    const section=(profile.sections||[]).find((x:any)=>String(x.id)===sectionId)||(sectionId==='records'?{id:'records',title:'Records',content:''}:null);
+    if(!section)throw Object.assign(new Error('Selected profile section is unavailable'),{status:404,code:'KNOWLEDGE_PROFILE_SECTION_MISSING'});
+    operation.target={system:'profile',profileId:profile.id,profileName:profile.name,sectionId:section.id,sectionTitle:section.title||section.id};
+    operation.expected={profileVersion:Number(profile.version||0)};operation.after={sectionContent:String(section.content||'')+recordMarkdown(raw)};
+    return operation;
+  }
+  if(['append_to_role','append_to_item','knowledge_record_add'].includes(operation.type)){
+    const role=text(raw.role,80),item=(raw.itemId?(state.items||[]).find((x:any)=>x.id===String(raw.itemId)):canonicalRoleTarget(state,role));
+    if(!item){operation.status='needs_target';operation.target={system:'library',role,itemId:null};return operation;}
+    const current=await itemContent(workspaceId,item);operation.target={system:'library',itemId:item.id,itemName:item.name,role,path:item.source?.locator?.path||null,provider:item.source?.provider};
+    operation.expected={contentHash:crypto.createHash('sha256').update(current).digest('hex')};operation.after={append:recordMarkdown(raw)};return operation;
+  }
+  if(operation.type==='timeline_event_add'){
+    operation.target={system:'library',itemId:text(raw.itemId,160)||null};operation.after={date:text(raw.date,40),title:text(raw.title,240),description:text(raw.description||raw.content,2000),eventType:text(raw.eventType||'event',80)};return operation;
+  }
+  if(operation.type==='library_item_update'){
+    const item=(state.items||[]).find((x:any)=>x.id===String(raw.itemId));if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});
+    const patch=raw.patch&&typeof raw.patch==='object'?raw.patch:{};operation.target={system:'library',itemId:item.id,itemName:item.name};operation.expected={updatedAt:item.updatedAt||null};operation.after={fields:patch};return operation;
+  }
+  throw Object.assign(new Error(`Unsupported change operation: ${operation.type||'missing'}`),{status:400,code:'KNOWLEDGE_CHANGE_OPERATION_INVALID'});
+}
+
+export async function createLibraryChangeRequest(user:OrbitUser,workspaceId:string,input:any={}){
+  await requireWorkspaceAccess(user,await getWorkspace(workspaceId));const state=await readLibrary(workspaceId),rawOps=Array.isArray(input.operations)?input.operations:[];
+  if(!rawOps.length)throw Object.assign(new Error('At least one proposed change is required'),{status:400});
+  const operations=[];for(let i=0;i<rawOps.length;i++)operations.push(await prepareApprovalOperation(user,workspaceId,state,rawOps[i],i));
+  const request:any={id:uid('cr'),workspaceId,status:operations.some((x:any)=>x.status==='needs_target')?'needs_target':'pending',source:input.source||{system:'unknown'},sourceSnapshot:input.sourceSnapshot||null,summary:text(input.summary||input.source?.title||'Proposed change',500),reason:text(input.reason,1000),operations,requestedBy:user.username,requestedById:String(user.id),submittedAt:now(),reviewedBy:null,reviewedAt:null,appliedAt:null,error:null,audit:[{at:now(),action:'submitted',actor:user.username}]};
+  state.changeRequests.push(request);state.changeRequests=state.changeRequests.slice(-5000);await saveLibrary(workspaceId,state);return approvalSummary(request);
+}
+export async function listLibraryChangeRequests(user:OrbitUser,workspaceId:string,input:any={}){
+  const ctx=await libraryContext(user,workspaceId),state=await readLibrary(workspaceId),status=text(input.status,40),sourceSystem=text(input.sourceSystem,80),sourceEntryId=text(input.sourceEntryId,180);
+  return {requests:(state.changeRequests||[]).filter((r:any)=>ctx.canManage||String(r.requestedById)===String(user.id)).filter((r:any)=>!status||r.status===status).filter((r:any)=>!sourceSystem||r.source?.system===sourceSystem).filter((r:any)=>!sourceEntryId||String(r.source?.entryId)===sourceEntryId).slice().reverse().map(approvalSummary)};
+}
+
+export async function assignLibraryChangeRequestTargets(user:OrbitUser,workspaceId:string,requestId:string,input:any={}){
+  const ctx=await libraryContext(user,workspaceId);requireManage(ctx.canManage);const state=await readLibrary(workspaceId),request=(state.changeRequests||[]).find((r:any)=>r.id===requestId);
+  if(!request)throw Object.assign(new Error('Change request not found'),{status:404});if(!['needs_target','pending'].includes(request.status))throw Object.assign(new Error('Change request target can no longer be changed'),{status:409});
+  const targets=input.targets&&typeof input.targets==='object'?input.targets:{},operations=[];
+  for(const operation of request.operations||[]){const selected=targets[operation.id]??targets[String(operation.order)]??input.itemId;if(selected===undefined||selected===null||selected===''){operations.push(operation);continue;}
+    const next={...operation.input,type:operation.type};if(operation.type==='profile_record_add'){const target=typeof selected==='object'?selected:{profileId:selected};next.profileId=target.profileId||operation.target?.profileId;next.sectionId=target.sectionId||operation.target?.sectionId||'records';}else next.itemId=typeof selected==='object'?selected.itemId:selected;
+    const rebuilt=await prepareApprovalOperation(user,workspaceId,state,next,operation.order);rebuilt.id=operation.id;operations.push(rebuilt);
+  }
+  request.operations=operations;request.status=operations.some((x:any)=>x.status==='needs_target')?'needs_target':'pending';request.audit.push({at:now(),action:'targets_assigned',actor:user.username});await saveLibrary(workspaceId,state);return approvalSummary(request);
+}
+async function applyApprovalOperation(user:OrbitUser,workspaceId:string,operation:any){
+  if(operation.status==='needs_target')throw Object.assign(new Error('A target must be selected before approval'),{status:409,code:'KNOWLEDGE_TARGET_REQUIRED'});
+  if(['append_to_role','append_to_item','knowledge_record_add'].includes(operation.type)){
+    const state=await readLibrary(workspaceId),item=(state.items||[]).find((x:any)=>x.id===operation.target?.itemId);if(!item)throw Object.assign(new Error('Knowledge target not found'),{status:404});
+    const current=await itemContent(workspaceId,item),currentHash=crypto.createHash('sha256').update(current).digest('hex');if(currentHash!==operation.expected?.contentHash)throw Object.assign(new Error('Target changed after submission; resubmit against the latest version'),{status:409,code:'KNOWLEDGE_CHANGE_STALE'});
+    const next=current+String(operation.after?.append||'');
+    if(item.source?.provider==='library.native'){await updateLibraryItem(user,workspaceId,item.id,{content:next});return {itemId:item.id,provider:'library.native'};}
+    const path=normalizePath(item.source?.locator?.path||''),perms=await permissionsForPath(user,workspaceId,path);if(!perms.write)throw Object.assign(new Error('Write permission is required for the selected Library target'),{status:403});
+    await writeFileBytes({workspaceId,path,bytes:Buffer.from(next,'utf8'),mimeType:'text/markdown',userId:user.id,preferText:true,upsert:true});await indexLibraryItem(user,workspaceId,item.id);return {itemId:item.id,path};
+  }
+  if(operation.type==='profile_record_add'){
+    const ctx=await libraryContext(user,workspaceId),projection=await profileKnowledgeProjection(workspaceId,operation.target.profileId,ctx.role,user.id,user.role),profile=projection.profile;
+    if(Number(profile.version||0)!==Number(operation.expected?.profileVersion))throw Object.assign(new Error('Profile changed after submission; resubmit against the latest version'),{status:409,code:'KNOWLEDGE_CHANGE_STALE'});
+    const sectionId=String(operation.target.sectionId||'records'),sections=[...(profile.sections||[])],index=sections.findIndex((x:any)=>String(x.id)===sectionId),base=index>=0?{...sections[index]}:{id:sectionId,title:sectionId==='records'?'Records':sectionId,kind:'text',content:''};base.content=String(operation.after?.sectionContent||'');if(index>=0)sections[index]=base;else sections.push(base);
+    const updated=await updateProfile(workspaceId,profile.id,{sections},user.username,ctx.role,user.id);return {profileId:updated.id,sectionId,version:updated.version};
+  }
+  if(operation.type==='timeline_event_add')return createEvent(user,workspaceId,{itemId:operation.target?.itemId,...operation.after});
+  if(operation.type==='library_item_update')return updateLibraryItem(user,workspaceId,operation.target.itemId,operation.after?.fields||{});
+  throw Object.assign(new Error('Unsupported change operation'),{status:400});
+}
+
+export async function resolveLibraryChangeRequest(user:OrbitUser,workspaceId:string,requestId:string,input:any={}){
+  const ctx=await libraryContext(user,workspaceId);requireManage(ctx.canManage);let state=await readLibrary(workspaceId),request=(state.changeRequests||[]).find((r:any)=>r.id===requestId);
+  if(!request)throw Object.assign(new Error('Change request not found'),{status:404});if(!['pending','needs_target'].includes(request.status))throw Object.assign(new Error('Change request is no longer pending'),{status:409});
+  const approve=input.approved===true||input.status==='approved',note=text(input.note,1000);if(approve&&request.status==='needs_target')throw Object.assign(new Error('Select a valid target before approving this request'),{status:409,code:'KNOWLEDGE_TARGET_REQUIRED'});if(!approve&&!note)throw Object.assign(new Error('A reason is required when denying a request'),{status:400,code:'KNOWLEDGE_REVIEW_REASON_REQUIRED'});
+  request.status=approve?'applying':'denied';request.reviewNote=note;request.reviewedBy=user.username;request.reviewedById=String(user.id);request.reviewedAt=now();request.audit.push({at:now(),action:approve?'approved':'denied',actor:user.username,note});await saveLibrary(workspaceId,state);
+  if(!approve)return approvalSummary(request);
+  try{
+    const results=[];for(const operation of request.operations||[])results.push({operationId:operation.id,result:await applyApprovalOperation(user,workspaceId,operation)});
+    state=await readLibrary(workspaceId);request=(state.changeRequests||[]).find((r:any)=>r.id===requestId);request.status='applied';request.appliedAt=now();request.results=results;request.audit.push({at:now(),action:'applied',actor:user.username});await saveLibrary(workspaceId,state);return approvalSummary(request);
+  }catch(error:any){state=await readLibrary(workspaceId);request=(state.changeRequests||[]).find((r:any)=>r.id===requestId);request.status=error?.code==='KNOWLEDGE_CHANGE_STALE'?'stale':'failed';request.error=error?.message||String(error);request.audit.push({at:now(),action:request.status,actor:user.username,error:request.error});await saveLibrary(workspaceId,state);throw error;}
 }

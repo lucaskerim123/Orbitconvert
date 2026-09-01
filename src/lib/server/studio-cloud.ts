@@ -21,7 +21,7 @@ export function studioSchema(){return {
   categories:['general','personal','work','project','legal','mental-health','court','research','reference']
 };}
 
-function compactDocument(row:any){return {...row,metadata_json:row.metadata_json||{},profile_ids:row.profile_ids||[],access:undefined};}
+function compactDocument(row:any){return {...row,metadata_json:row.metadata_json||{},profile_ids:row.profile_ids||[],access:row.access};}
 async function documentAccess(user:OrbitUser,workspaceId:string,id:string){
   const workspace=await studioWorkspace(user,workspaceId,'studio_view');
   const db=getSupabaseAdmin();

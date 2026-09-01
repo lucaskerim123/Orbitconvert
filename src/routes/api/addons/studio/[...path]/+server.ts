@@ -6,6 +6,7 @@ import {
   restoreStudioRevision, saveStudioShare, setStudioLifecycle, studioPeople, studioProfiles,
   studioRevisions, studioSchema, studioShares, updateStudioDocument
 } from '$lib/server/studio-cloud';
+import { createLibraryChangeRequest, listLibraryChangeRequests } from '$lib/server/library';
 
 const clean=(v:any)=>String(v??'').trim();
 const fail=(e:any)=>json({error:String(e?.message||'Studio request failed'),code:String(e?.code||'STUDIO_ERROR')},{status:Number(e?.status||500)});
@@ -22,7 +23,7 @@ export async function GET({params,url,cookies}:any){try{
   if(r.area==='documents'&&r.id&&!r.operation)return json(await getStudioDocument(user,r.workspaceId,r.id));
   if(r.area==='documents'&&r.id&&r.operation==='revisions')return json(await studioRevisions(user,r.workspaceId,r.id));
   if(r.area==='documents'&&r.id&&r.operation==='shares')return json(await studioShares(user,r.workspaceId,r.id));
-  if(r.area==='documents'&&r.id&&r.operation==='proposals')return json({requests:[]});
+  if(r.area==='documents'&&r.id&&r.operation==='proposals')return json(await listLibraryChangeRequests(user,r.workspaceId,{sourceSystem:'studio',sourceEntryId:r.id}));
   throw Object.assign(new Error('Studio route not found'),{status:404});
 }catch(e){return fail(e);}}
 export async function POST({params,request,cookies}:any){try{
@@ -31,7 +32,7 @@ export async function POST({params,request,cookies}:any){try{
   if(r.area==='documents'&&r.id&&['finalize','archive','draft'].includes(r.operation))return json(await setStudioLifecycle(user,r.workspaceId,r.id,r.operation as any));
   if(r.area==='documents'&&r.id&&r.operation==='restore-revision')return json(await restoreStudioRevision(user,r.workspaceId,r.id,Number(input.revisionNo)));
   if(r.area==='documents'&&r.id&&r.operation==='shares')return json(await saveStudioShare(user,r.workspaceId,r.id,input));
-  if(r.area==='documents'&&r.id&&r.operation==='proposals')return json({request:{status:'needs_target',summary:'Studio publication requires cloud Library approval support'}});
+  if(r.area==='documents'&&r.id&&r.operation==='proposals'){const doc=(await getStudioDocument(user,r.workspaceId,r.id)).item,meta=doc.metadata_json||{},roleMap:any={incident:'incident_log',timeline:'timeline',evidence:'evidence_target',reference:'reference_target'};const operation=String(doc.subtype)==='profile-record'?{type:'profile_record_add',profileId:String(meta.profileTargetId||''),sectionId:String(meta.profileSectionId||'records'),title:doc.title,content:doc.content_text,date:doc.entry_date,category:String(meta.category||'general')}:{type:'append_to_role',role:roleMap[String(doc.subtype)]||'general_record_target',title:doc.title,content:doc.content_text,date:doc.entry_date,category:String(meta.category||'general')};const request=await createLibraryChangeRequest(user,r.workspaceId,{source:{system:'studio',entryId:doc.id,revision:doc.current_revision,title:doc.title},sourceSnapshot:{entryId:doc.id,revision:doc.current_revision,status:doc.status},summary:`Publish Studio entry: ${doc.title}`,operations:[operation]});return json({request});}
   throw Object.assign(new Error('Studio route not found'),{status:404});
 }catch(e){return fail(e);}}
 

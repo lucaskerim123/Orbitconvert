@@ -5,7 +5,7 @@ import {
 	createCollection, createEvent, createLibraryItem, createLink, deleteCollection, deleteEvent,
 	deleteLibraryItem, deleteLink, exportLibrary, importLibrary, indexLibraryItem, presentLibrary,
 	readLibrary, registerScannedFiles, retrieveLibrary, saveLibrary, saveUsage, deleteUsage, scanLibraryFiles,
-	updateCollection, updateEvent, updateLibraryItem
+	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest
 } from '$lib/server/library';
 
 const clean=(v:any)=>String(v??'').trim();
@@ -13,10 +13,11 @@ function fail(error:any){return json({error:String(error?.message||'Request fail
 async function body(request:Request){return request.headers.get('content-type')?.includes('application/json') ? await request.json() : {};}
 async function ctx(cookies:any){const user=await requireUser(cookies);await assertPanelLicensed();return user;}
 function route(params:any){const p=clean(params.path).split('/').filter(Boolean);if(p[0]!=='workspaces'||!p[1])throw Object.assign(new Error('Library route not found'),{status:404});return {workspaceId:p[1],area:p[2]||'',id:p[3]||'',operation:p[4]||'',extra:p[5]||''};}
-export async function GET({params,cookies}:any){
+export async function GET({params,url,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);if(!r.area)return json(await presentLibrary(user,r.workspaceId));
 		if(r.area==='export')return json(await exportLibrary(r.workspaceId));
 		if(r.area==='providers')return json({providers:[{id:'base.files',name:'Files'},{id:'base.profiles',name:'Profiles'}]});
+		if(r.area==='change-requests')return json(await listLibraryChangeRequests(user,r.workspaceId,Object.fromEntries(url.searchParams.entries())));
 		if(r.area==='changes'){const s=await readLibrary(r.workspaceId);return json({changes:[...(s.sourceHistory||[])].reverse(),count:(s.sourceHistory||[]).length});}
 		if(r.area==='intelligence'){const s=await readLibrary(r.workspaceId);return json({workspaceId:r.workspaceId,entities:s.entities||[],entityMentions:s.entityMentions||[],facts:s.facts||[],factRelations:s.factRelations||[],stats:{facts:(s.facts||[]).length,relations:(s.factRelations||[]).length}});}
 		if(r.area==='items'&&r.id&&r.operation==='resolve'){const s=await readLibrary(r.workspaceId);const item=s.items.find((x:any)=>x.id===r.id);if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});return json({item});}
@@ -27,6 +28,7 @@ export async function GET({params,cookies}:any){
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function POST({params,request,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='change-requests'&&!r.id)return json(await createLibraryChangeRequest(user,r.workspaceId,input));
 		if(r.area==='import')return json(await importLibrary(user,r.workspaceId,input));
 		if(r.area==='scan')return json(await scanLibraryFiles(user,r.workspaceId,input));
 		if(r.area==='scan-register')return json(await registerScannedFiles(user,r.workspaceId,input));
@@ -42,6 +44,8 @@ export async function POST({params,request,cookies}:any){
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function PATCH({params,request,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='change-requests'&&r.id&&r.operation==='targets')return json(await assignLibraryChangeRequestTargets(user,r.workspaceId,r.id,input));
+		if(r.area==='change-requests'&&r.id&&!r.operation)return json(await resolveLibraryChangeRequest(user,r.workspaceId,r.id,input));
 		if(r.area==='items'&&r.id)return json(await updateLibraryItem(user,r.workspaceId,r.id,input));
 		if(r.area==='collections'&&r.id)return json(await updateCollection(user,r.workspaceId,r.id,input));
 		if(r.area==='events'&&r.id)return json(await updateEvent(user,r.workspaceId,r.id,input));
