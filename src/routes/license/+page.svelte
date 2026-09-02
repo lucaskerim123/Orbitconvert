@@ -3,12 +3,28 @@
 	import { KeyRound, LoaderCircle, RefreshCw, ShieldCheck, ExternalLink } from '@lucide/svelte';
 
 	let summary = $state<any>(null);
+	let provider = $state<{ providerBase: string; allowedProviderBases: string[] } | null>(null);
+	let providerInput = $state('');
+	let providerSaving = $state(false);
+	let providerError = $state('');
 	let licenseKey = $state('');
 	let loading = $state(true);
 	let refreshing = $state(false);
 	let activating = $state(false);
 	let error = $state('');
 	let message = $state('');
+
+	async function loadProvider() {
+		try {
+			const response = await fetch('/api/license/provider', { cache: 'no-store' });
+			const payload = await response.json();
+			if (!response.ok) throw new Error(payload.error || 'Could not load licence API');
+			provider = payload;
+			providerInput = payload.providerBase;
+		} catch (err) {
+			providerError = err instanceof Error ? err.message : 'Could not load licence API';
+		}
+	}
 
 	async function load(refresh = false) {
 		if (refresh) refreshing = true;
@@ -19,6 +35,7 @@
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.refreshError || payload.error || 'Could not load licence status');
 			summary = payload;
+			await loadProvider();
 		} catch (err) {
 			error = err instanceof Error ? err.message : 'Could not load licence status';
 		} finally {
@@ -28,6 +45,29 @@
 	}
 
 	onMount(() => { void load(); });
+
+	async function saveProvider() {
+		if (!provider || !providerInput || providerInput === provider.providerBase) return;
+		providerSaving = true;
+		providerError = '';
+		message = '';
+		try {
+			const response = await fetch('/api/license/provider', {
+				method: 'PUT',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ providerBase: providerInput })
+			});
+			const payload = await response.json();
+			if (!response.ok) throw new Error(payload.error || 'Could not update licence API');
+			provider = payload;
+			providerInput = payload.providerBase;
+			message = 'Licence API updated. Try activation again.';
+		} catch (err) {
+			providerError = err instanceof Error ? err.message : 'Could not update licence API';
+		} finally {
+			providerSaving = false;
+		}
+	}
 
 	async function activate(event: SubmitEvent) {
 		event.preventDefault();
@@ -64,11 +104,9 @@
 			<div>
 				<div class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary"><ShieldCheck class="size-3.5" /> Licence required</div>
 				<h1 class="mt-4 text-2xl font-semibold tracking-tight">OrbitFS Base System</h1>
-				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">This deployment only runs when the existing Incendiary Networks licence service validates the <code>orbitfs_panel</code> entitlement for this installation.</p>
+				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">This deployment runs when the Incendiary Networks licence service validates the <code>orbitfs_panel</code> entitlement for this installation.</p>
 			</div>
-			<button class="inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50" onclick={() => load(true)} disabled={refreshing}>
-				<RefreshCw class={`size-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh
-			</button>
+			<button class="inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50" onclick={() => load(true)} disabled={refreshing}><RefreshCw class={`size-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh</button>
 		</div>
 
 		{#if loading}
@@ -81,9 +119,23 @@
 				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Key</p><p class="mt-1 font-mono text-sm">{summary?.keyHint || 'not activated'}</p></div>
 			</div>
 
-			{#if summary?.reason && !summary?.licensed}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{summary.reason}{#if summary.refreshError}<span class="block mt-1 text-xs opacity-80">{summary.refreshError}</span>{/if}</div>{/if}
+			{#if summary?.reason && !summary?.licensed}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{summary.reason}{#if summary.refreshError}<span class="mt-1 block text-xs opacity-80">{summary.refreshError}</span>{/if}</div>{/if}
 			{#if error}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}
 			{#if message}<div class="mt-4 rounded-lg border px-4 py-3 text-sm">{message}</div>{/if}
+
+			{#if provider}
+				<div class="mt-6 rounded-xl border bg-background/40 p-4">
+					<label class="block text-sm font-medium" for="license-api">Licence API</label>
+					<p class="mt-1 text-xs text-muted-foreground">Only approved Incendiary Networks endpoints are accepted. Arbitrary external licence servers are blocked by the backend.</p>
+					<div class="mt-3 flex flex-col gap-2 sm:flex-row">
+						<select id="license-api" class="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" bind:value={providerInput}>
+							{#each provider.allowedProviderBases as url}<option value={url}>{url}</option>{/each}
+						</select>
+						<button class="inline-flex h-10 items-center justify-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50" type="button" onclick={saveProvider} disabled={providerSaving || providerInput === provider.providerBase}>{#if providerSaving}<LoaderCircle class="size-4 animate-spin" />{/if} Save API</button>
+					</div>
+					{#if providerError}<p class="mt-2 text-sm text-destructive">{providerError}</p>{/if}
+				</div>
+			{/if}
 
 			<form class="mt-6 space-y-3" onsubmit={activate}>
 				<label class="block text-sm font-medium" for="license-key">Licence key</label>
