@@ -1,10 +1,18 @@
 import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/auth';
+import { getSupabaseAdmin } from '$lib/server/supabase';
 import { getLicenseProviderSettings, setLicenseProviderBase } from '$lib/server/license';
 
-export async function GET({ cookies }) {
+async function requireProviderAdmin(cookies: any) {
+	const supabase = getSupabaseAdmin();
+	const { count, error } = await supabase.from('orbitfs_users').select('*', { count: 'exact', head: true });
+	if (error) throw error;
+	if ((count ?? 0) === 0) return null;
+	return requireAdmin(cookies);
+}
+
+export async function GET() {
 	try {
-		await requireAdmin(cookies);
 		return json(await getLicenseProviderSettings());
 	} catch (error: any) {
 		return json({ error: String(error?.message || 'Could not load licence API settings') }, { status: Number(error?.status || 500) });
@@ -13,7 +21,7 @@ export async function GET({ cookies }) {
 
 export async function PUT({ request, cookies }) {
 	try {
-		await requireAdmin(cookies);
+		await requireProviderAdmin(cookies);
 		const body = await request.json().catch(() => ({}));
 		return json(await setLicenseProviderBase(String(body.providerBase || '')));
 	} catch (error: any) {
