@@ -6,6 +6,10 @@ export const PANEL_COMPONENT = 'orbitfs_panel';
 const LICENSE_ID = 'primary';
 const DEFAULT_PROVIDER = 'https://license.incendiarynetworks.cc';
 const DEFAULT_VALIDATE_PATH = '/api/license/validate';
+export const ALLOWED_LICENSE_API_BASES = [
+	'https://license.incendiarynetworks.cc',
+	'https://licenseadmin.incendiarynetworks.cc'
+] as const;
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAqAHPTGUEd1LkTFxngD5o
 CiN+YbFIei69WO3PnR7OMYdtxIBShPq3PK+80zFRvhpQzpBtc+CsIQY0WPLmnC9t
@@ -60,9 +64,40 @@ const nowIso = () => new Date().toISOString();
 const refreshMs = () => Math.max(60_000, Number(env.ORBITFS_LICENSE_REFRESH_MINUTES || 180) * 60_000);
 const signalMs = () => Math.max(60_000, Number(env.ORBITFS_LICENSE_SIGNAL_MINUTES || 1) * 60_000);
 const keyHint = (value: string) => value.length > 4 ? `****${value.slice(-4)}` : '****';
-const providerBase = () => String(env.ORBITFS_LICENSE_API_URL || env.ORBITFS_LICENSE_URL || DEFAULT_PROVIDER).trim().replace(/\/+$/, '');
-const validateUrl = () => String(env.ORBITFS_LICENSE_VALIDATE_URL || '').trim() || `${providerBase()}${String(env.ORBITFS_LICENSE_VALIDATE_PATH || DEFAULT_VALIDATE_PATH).startsWith('/') ? '' : '/'}${String(env.ORBITFS_LICENSE_VALIDATE_PATH || DEFAULT_VALIDATE_PATH)}`;
 const entitlementPublicKey = () => String(env.ORBITFS_ENTITLEMENT_PUBLIC_KEY || '').replace(/\\n/g, '\n').trim() || PUBLIC_KEY;
+
+function normalizeApprovedProviderBase(value: string) {
+	try {
+		const parsed = new URL(String(value || '').trim());
+		if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
+		if (parsed.pathname !== '/' && parsed.pathname !== '') throw new Error();
+		const normalized = `${parsed.protocol}//${parsed.host}`;
+		if (!(ALLOWED_LICENSE_API_BASES as readonly string[]).includes(normalized)) throw new Error();
+		return normalized;
+	} catch {
+		throw Object.assign(new Error('Licence API URL is not an approved OrbitFS licence endpoint'), { code: 'LICENSE_PROVIDER_NOT_ALLOWED', status: 400 });
+	}
+}
+
+function environmentProviderBase() {
+	const configured = String(env.ORBITFS_LICENSE_API_URL || env.ORBITFS_LICENSE_URL || '').trim();
+	if (!configured) return DEFAULT_PROVIDER;
+	try { return normalizeApprovedProviderBase(configured); } catch { return DEFAULT_PROVIDER; }
+}
+
+function providerBaseFromRow(row: LicenseRow | null) {
+	const metadata = { ...(row?.metadata || {}) } as Record<string, any>;
+	if (typeof metadata.providerBase === 'string' && metadata.providerBase) {
+		try { return normalizeApprovedProviderBase(metadata.providerBase); } catch { /* fall through */ }
+	}
+	return environmentProviderBase();
+}
+
+function validatePath() {
+	const configured = String(env.ORBITFS_LICENSE_VALIDATE_PATH || DEFAULT_VALIDATE_PATH).trim();
+	if (!configured.startsWith('/api/license/') || configured.includes('..') || configured.includes('://')) return DEFAULT_VALIDATE_PATH;
+	return configured;
+}
 
 async function getRow(): Promise<LicenseRow | null> {
 	const supabase = getSupabaseAdmin();
@@ -79,6 +114,19 @@ async function saveRow(patch: Record<string, unknown>) {
 		? await supabase.from('orbitfs_license').update(payload).eq('id', LICENSE_ID)
 		: await supabase.from('orbitfs_license').insert({ status: 'unconfigured', metadata: {}, ...payload });
 	if (result.error) throw result.error;
+}
+
+export async function getLicenseProviderSettings() {
+	const row = await getRow();
+	return { providerBase: providerBaseFromRow(row), allowedProviderBases: [...ALLOWED_LICENSE_API_BASES] };
+}
+
+export async function setLicenseProviderBase(value: string) {
+	const providerBase = normalizeApprovedProviderBase(value);
+	const row = await getRow();
+	const metadata = { ...(row?.metadata || {}) } as Record<string, any>;
+	await saveRow({ metadata: { ...metadata, providerBase, providerChangedAt: nowIso() } });
+	return { providerBase, allowedProviderBases: [...ALLOWED_LICENSE_API_BASES] };
 }
 
 export async function ensureInstallationIdentity() {
@@ -104,9 +152,7 @@ function verifyEntitlement(token: string, installationId: string, allowGrace = f
 	if (payload.iss !== 'license.incendiarynetworks.cc' || payload.aud !== 'orbitfs-runtime' || !deadline || now > deadline) {
 		throw Object.assign(new Error('Signed entitlement expired or invalid'), { code: 'LICENSE_ENTITLEMENT_EXPIRED' });
 	}
-	if (payload.installationId !== installationId) {
-		throw Object.assign(new Error('Entitlement belongs to another installation'), { code: 'LICENSE_INSTALLATION_MISMATCH' });
-	}
+	if (payload.installationId !== installationId) throw Object.assign(new Error('Entitlement belongs to another installation'), { code: 'LICENSE_INSTALLATION_MISMATCH' });
 	return payload;
 }
 
@@ -145,32 +191,25 @@ function summaryFromPayload(payload: EntitlementPayload, row: LicenseRow | null,
 function unlicensedSummary(installationId: string, row: LicenseRow | null, reason: string, refreshError: string | null = null): PanelLicenseSummary {
 	const metadata = { ...(row?.metadata || {}) } as Record<string, any>;
 	return {
-		valid: false,
-		licensed: false,
-		enforcement: true,
-		reason,
-		status: row?.status || 'unconfigured',
+		valid: false, licensed: false, enforcement: true, reason, status: row?.status || 'unconfigured',
 		keyHint: typeof metadata.keyHint === 'string' ? metadata.keyHint : null,
-		installationId,
-		lastCheckedAt: typeof metadata.lastCheckedAt === 'string' ? metadata.lastCheckedAt : null,
-		offlineGrace: false,
-		refreshError,
+		installationId, lastCheckedAt: typeof metadata.lastCheckedAt === 'string' ? metadata.lastCheckedAt : null,
+		offlineGrace: false, refreshError,
 		component: { state: 'blocked', allowed: false, lockedToThisInstallation: false, reason },
 		components: { [PANEL_COMPONENT]: { state: 'blocked', allowed: false, lockedToThisInstallation: false, reason } },
-		plan: row?.plan || null,
-		licensedTo: row?.licensed_to || null,
-		expiresAt: row?.expires_at || null
+		plan: row?.plan || null, licensedTo: row?.licensed_to || null, expiresAt: row?.expires_at || null
 	};
 }
 
 async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [PANEL_COMPONENT, 'orbitfs_mcp']) {
 	if (!licenseKey) throw Object.assign(new Error('Licence key is required'), { code: 'LICENSE_KEY_REQUIRED', status: 400 });
+	const row = await getRow();
+	const providerBase = providerBaseFromRow(row);
 	const headers: Record<string, string> = { 'content-type': 'application/json' };
 	const token = String(env.ORBITFS_LICENSE_API_TOKEN || '').trim();
 	if (token) headers.authorization = `Bearer ${token}`;
-	const response = await fetch(validateUrl(), {
-		method: 'POST',
-		headers,
+	const response = await fetch(`${providerBase}${validatePath()}`, {
+		method: 'POST', headers,
 		body: JSON.stringify({ licenseKey, installationId, components, activate }),
 		signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
 	});
@@ -186,24 +225,15 @@ async function persistEntitlement(licenseKey: string, payload: EntitlementPayloa
 	const component = panelComponent(payload);
 	const licensed = componentLicensed(component);
 	const lastCheckedAt = nowIso();
-	const nextMetadata = {
-		...metadata,
-		installationId: payload.installationId,
-		entitlement,
-		keyHint: keyHint(licenseKey),
-		source,
-		lastCheckedAt
-	};
 	await saveRow({
 		license_key: licenseKey,
 		status: licensed ? 'active' : 'invalid',
 		plan: String(payload.plan || payload.tier || '') || null,
 		licensed_to: String(payload.licensedTo || payload.customerName || payload.sub || '') || null,
 		expires_at: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
-		metadata: nextMetadata
+		metadata: { ...metadata, installationId: payload.installationId, entitlement, keyHint: keyHint(licenseKey), source, lastCheckedAt }
 	});
-	const refreshed = await getRow();
-	return summaryFromPayload(payload, refreshed);
+	return summaryFromPayload(payload, await getRow());
 }
 
 async function revisionChanged(row: LicenseRow) {
@@ -211,15 +241,13 @@ async function revisionChanged(row: LicenseRow) {
 	const lastSignalAt = typeof metadata.lastSignalAt === 'string' ? Date.parse(metadata.lastSignalAt) : 0;
 	if (lastSignalAt && Date.now() - lastSignalAt < signalMs()) return false;
 	try {
-		const response = await fetch(`${providerBase()}/api/license/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const response = await fetch(`${providerBaseFromRow(row)}/api/license/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
 		if (!response.ok) return false;
 		const revision = (await response.json().catch(() => ({}))).revision;
 		const changed = Boolean(metadata.lastRevision && revision && metadata.lastRevision !== revision);
 		await saveRow({ metadata: { ...metadata, lastSignalAt: nowIso(), lastRevision: revision || metadata.lastRevision || null } });
 		return changed;
-	} catch {
-		return false;
-	}
+	} catch { return false; }
 }
 
 export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}): Promise<PanelLicenseSummary> {
@@ -235,9 +263,7 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 			const cached = verifyEntitlement(cachedToken, installationId, false);
 			if (!(await revisionChanged(row!))) return summaryFromPayload(cached, await getRow());
 			row = await getRow();
-		} catch {
-			// Refresh below.
-		}
+		} catch { /* refresh below */ }
 	}
 	try {
 		const result = await callProvider(licenseKey, installationId, false);
@@ -247,9 +273,7 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 			try {
 				const cached = verifyEntitlement(cachedToken, installationId, true);
 				return summaryFromPayload(cached, row, { offlineGrace: true, refreshError: String(error?.message || error) });
-			} catch {
-				// Fail closed below.
-			}
+			} catch { /* fail closed below */ }
 		}
 		return unlicensedSummary(installationId, row, String(error?.code || 'provider_unavailable'), String(error?.message || error));
 	}
@@ -258,11 +282,9 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 export async function activatePanelLicense(licenseKey: string) {
 	const installationId = await ensureInstallationIdentity();
 	const cleanKey = String(licenseKey || '').trim();
-	const result = await callProvider(cleanKey, installationId, true);
+	const result = await callProvider(cleanKey, installationId, true, [PANEL_COMPONENT]);
 	const component = panelComponent(result.payload);
-	if (!componentLicensed(component)) {
-		throw Object.assign(new Error('Licence does not allow the OrbitFS Base System on this installation'), { code: component.reason || 'LICENSE_COMPONENT_DENIED', status: 403 });
-	}
+	if (!componentLicensed(component)) throw Object.assign(new Error('Licence does not allow the OrbitFS Base System on this installation'), { code: component.reason || 'LICENSE_COMPONENT_DENIED', status: 403 });
 	return await persistEntitlement(cleanKey, result.payload, result.entitlement, 'activation');
 }
 
@@ -283,4 +305,3 @@ export async function assertPanelLicensed() {
 	if (summary.licensed) return summary;
 	throw Object.assign(new Error('OrbitFS Base System licence is required'), { code: 'LICENSE_REQUIRED', status: 403, license: summary });
 }
-
