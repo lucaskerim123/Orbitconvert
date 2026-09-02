@@ -1,0 +1,22 @@
+import { json } from '@sveltejs/kit';
+import { requireAdmin } from '$lib/server/auth';
+import { getLicenseProviderSettings, setLicenseProviderBase } from '$lib/server/license';
+
+export async function GET({ cookies }) {
+	try {
+		await requireAdmin(cookies);
+		return json(await getLicenseProviderSettings());
+	} catch (error: any) {
+		return json({ error: String(error?.message || 'Could not load licence API settings') }, { status: Number(error?.status || 500) });
+	}
+}
+
+export async function PUT({ request, cookies }) {
+	try {
+		await requireAdmin(cookies);
+		const body = await request.json().catch(() => ({}));
+		return json(await setLicenseProviderBase(String(body.providerBase || '')));
+	} catch (error: any) {
+		return json({ error: String(error?.message || 'Could not save licence API settings'), code: String(error?.code || 'LICENSE_PROVIDER_INVALID') }, { status: Number(error?.status || 400) });
+	}
+}
