@@ -1,5 +1,5 @@
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { getPanelLicenseSummary } from '$lib/server/license';
+import { getPanelLicenseSummary, activateLicenseComponent } from '$lib/server/license';
 
 export const CLOUD_ADDON_MANIFESTS: Record<string, any> = {
 	mcp: {
@@ -13,8 +13,17 @@ export const CLOUD_ADDON_MANIFESTS: Record<string, any> = {
 
 export async function addonLicensed(component?: string | null) {
 	if (!component) return true;
-	const summary = await getPanelLicenseSummary();
-	const item = summary.components?.[component] || {};
+	let summary = await getPanelLicenseSummary();
+	let item = summary.components?.[component] || {};
+	const needsActivation = item.allowed === true && item.lockedToThisInstallation !== true &&
+		(item.state === 'active' || item.reason === 'activation_required');
+	if (needsActivation) {
+		try {
+			await activateLicenseComponent(component);
+			summary = await getPanelLicenseSummary({ refresh: true });
+			item = summary.components?.[component] || {};
+		} catch { /* remain blocked below */ }
+	}
 	return item.allowed === true && item.lockedToThisInstallation === true && ['enabled','locked'].includes(String(item.state));
 }
 
@@ -49,7 +58,7 @@ export async function presentAddon(row: any) {
 		licenseState:licensed ? 'enabled':'blocked',installStatus:installed ? 'installed':'registered',
 		installMethod:'cloud',supports:['install','configure','test','attach','detach','uninstall'],
 		deploymentUrl:row.deployment_url,transportPath:row.transport_path,sourceRef:row.source_ref,
-		manifest,frontend,runtime:row.runtime || {},config:row.config || {},
+		online:Boolean(row.runtime?.online),manifest,frontend,runtime:row.runtime || {},config:row.config || {},
 		wiring:{ package:false,panel:true,backend:installed,frontend:installed,engine:installed,service:false }
 	};
 }
