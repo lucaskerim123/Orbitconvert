@@ -5,7 +5,7 @@ import {
 	createCollection, createEvent, createLibraryItem, createLink, deleteCollection, deleteEvent,
 	deleteLibraryItem, deleteLink, exportLibrary, importLibrary, indexLibraryItem, presentLibrary,
 	readLibrary, registerScannedFiles, retrieveLibrary, saveLibrary, saveUsage, deleteUsage, scanLibraryFiles,
-	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest, createLibraryGroup, updateLibraryGroup, deleteLibraryGroup, resolveLibraryRoleTargets, libraryHealth, editLibraryChangeRequestOperation, createAppliedChangeRevision
+	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest, createLibraryGroup, updateLibraryGroup, deleteLibraryGroup, resolveLibraryRoleTargets, libraryHealth, editLibraryChangeRequestOperation, createAppliedChangeRevision, getLibrarySettings, updateLibrarySettings
 } from '$lib/server/library';
 
 const clean=(v:any)=>String(v??'').trim();
@@ -16,7 +16,8 @@ function route(params:any){const p=clean(params.path).split('/').filter(Boolean)
 export async function GET({params,url,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);if(!r.area)return json(await presentLibrary(user,r.workspaceId));
 		if(r.area==='export')return json(await exportLibrary(r.workspaceId));
-		if(r.area==='providers')return json({providers:[{id:'base.files',name:'Files'},{id:'base.profiles',name:'Profiles'},{id:'library.native',name:'Native Library'}]});
+		if(r.area==='providers')return json({providers:[{id:'library.native',name:'Native Library / Knowledge'},{id:'base.profiles',name:'Profiles'},{id:'memory.knowledge',name:'Memory / Knowledge Base'}],legacyProviders:[{id:'base.files',name:'Legacy file source',deprecated:true}]});
+		if(r.area==='settings')return json(await getLibrarySettings(user,r.workspaceId));
 		if(r.area==='targets')return json(await resolveLibraryRoleTargets(user,r.workspaceId,url.searchParams.get('role')||'general_record_target'));
 		if(r.area==='health')return json(await libraryHealth(user,r.workspaceId));
 		if(r.area==='change-requests')return json(await listLibraryChangeRequests(user,r.workspaceId,Object.fromEntries(url.searchParams.entries())));
@@ -34,8 +35,8 @@ export async function POST({params,request,cookies}:any){
 		if(r.area==='change-requests'&&!r.id)return json(await createLibraryChangeRequest(user,r.workspaceId,input));
 		if(r.area==='change-requests'&&r.id&&r.operation==='revision')return json({request:await createAppliedChangeRevision(user,r.workspaceId,r.id,input)});
 		if(r.area==='import')return json(await importLibrary(user,r.workspaceId,input));
-		if(r.area==='scan')return json(await scanLibraryFiles(user,r.workspaceId,input));
-		if(r.area==='scan-register')return json(await registerScannedFiles(user,r.workspaceId,input));
+		if(r.area==='scan')return json({deprecated:true,filesystem:false,message:'Filesystem scanning is retired in OrbitFS Cloud. Ingest content into Library/Memory instead.'},{status:410});
+		if(r.area==='scan-register')return json({deprecated:true,filesystem:false,message:'Filesystem registration is retired in OrbitFS Cloud. Create or import Library knowledge instead.'},{status:410});
 		if(r.area==='items'&&!r.id)return json(await createLibraryItem(user,r.workspaceId,input));
 		if(r.area==='items'&&r.id&&r.operation==='index')return json(await indexLibraryItem(user,r.workspaceId,r.id));
 		if(r.area==='retrieve')return json(await retrieveLibrary(user,r.workspaceId,input));
@@ -48,6 +49,7 @@ export async function POST({params,request,cookies}:any){
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function PATCH({params,request,cookies}:any){
 	try{const user=await ctx(cookies);const r=route(params);const input=await body(request);
+		if(r.area==='settings')return json(await updateLibrarySettings(user,r.workspaceId,input));
 		if(r.area==='groups'&&r.id)return json(await updateLibraryGroup(user,r.workspaceId,r.id,input));
 		if(r.area==='change-requests'&&r.id&&r.operation==='targets')return json({request:await assignLibraryChangeRequestTargets(user,r.workspaceId,r.id,input)});
 		if(r.area==='change-requests'&&r.id&&r.operation==='operations')return json({request:await editLibraryChangeRequestOperation(user,r.workspaceId,r.id,input)});
