@@ -13,6 +13,26 @@ const uid = (prefix:string) => `${prefix}_${crypto.randomUUID()}`;
 const text = (value:any,max=500) => String(value ?? '').trim().slice(0,max);
 const list = (value:any) => [...new Set((Array.isArray(value)?value:String(value||'').split(',')).map((v:any)=>text(v,96)).filter(Boolean))];
 
+export const LIBRARY_SETTINGS_DEFAULTS = Object.freeze({
+  freshnessMs:30000,
+  maxFreshRefresh:100,
+  scanMaxFiles:1000,
+  scanRegisterBatch:100,
+  scanIndexByDefault:true,
+  retrievalLimit:12,
+  retrievalMaxChars:12000,
+  analysisMaxItems:250,
+  analysisMaxCharacters:1500000
+});
+export const LIBRARY_SAFEGUARDS = Object.freeze({
+  approvalBeforeAuthoritativeWrites:true,
+  staleTargetValidation:true,
+  writeVerificationRollback:true,
+  directBinaryDocumentEdits:false,
+  filesystemMode:false,
+  canonicalStore:'supabase-library-memory'
+});
+
 export const LIBRARY_ROLES = [
   {id:'core_file',label:'Core File',sourceKinds:['file','folder'],loadMode:'full'},
   {id:'core_profile',label:'Core Profile',sourceKinds:['profile'],loadMode:'full'},
@@ -42,7 +62,7 @@ export const LIBRARY_LIFECYCLE_DEFINITIONS = [
 ] as const;
 
 function blank(workspaceId:string) {
-	return { version:8, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], createdAt:now(), updatedAt:now() } as any;
+	return { version:8, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], settings:{...LIBRARY_SETTINGS_DEFAULTS}, createdAt:now(), updatedAt:now() } as any;
 }
 
 export async function readLibrary(workspaceId:string) {
@@ -50,7 +70,7 @@ export async function readLibrary(workspaceId:string) {
 	const r=await db.from('orbitfs_library_state').select('state,updated_at').eq('workspace_id',workspaceId).maybeSingle();
 	if(r.error) throw r.error;
 	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:8};
-	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= [];
+	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= []; state.settings={...LIBRARY_SETTINGS_DEFAULTS,...(state.settings||{})};
 	for(const item of state.items||[]){ item.lifecycleState=lifecycle(item.lifecycleState ?? item.lifecycle); item.lifecycle=item.lifecycleState; item.roles=roles(item.roles); }
 	state.updatedAt=r.data?.updated_at || state.updatedAt;
 	return state;
@@ -65,6 +85,30 @@ export async function libraryContext(user:OrbitUser,workspaceId:string) {
 	const workspace=await getWorkspace(workspaceId); const role=await requireWorkspaceAccess(user,workspace);
 	const management=await managementPermissions(user,workspace,role);
 	return { workspace, role, canManage:Boolean(management.manage_library), members:await workspaceMembers(workspaceId) };
+}
+
+export async function getLibrarySettings(user:OrbitUser,workspaceId:string){
+  const ctx=await libraryContext(user,workspaceId);
+  const state=await readLibrary(workspaceId);
+  return {settings:{...LIBRARY_SETTINGS_DEFAULTS,...(state.settings||{})},safeguards:LIBRARY_SAFEGUARDS,canManage:ctx.canManage};
+}
+export async function updateLibrarySettings(user:OrbitUser,workspaceId:string,input:any={}){
+  const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage);
+  const state=await readLibrary(workspaceId),raw=input.settings&&typeof input.settings==='object'?input.settings:input;
+  const clampInt=(v:any,min:number,max:number,fallback:number)=>Math.max(min,Math.min(max,Math.round(Number.isFinite(Number(v))?Number(v):fallback)));
+  state.settings={
+    freshnessMs:clampInt(raw.freshnessMs,1000,300000,LIBRARY_SETTINGS_DEFAULTS.freshnessMs),
+    maxFreshRefresh:clampInt(raw.maxFreshRefresh,1,2000,LIBRARY_SETTINGS_DEFAULTS.maxFreshRefresh),
+    scanMaxFiles:clampInt(raw.scanMaxFiles,50,10000,LIBRARY_SETTINGS_DEFAULTS.scanMaxFiles),
+    scanRegisterBatch:clampInt(raw.scanRegisterBatch,1,500,LIBRARY_SETTINGS_DEFAULTS.scanRegisterBatch),
+    scanIndexByDefault:raw.scanIndexByDefault!==false,
+    retrievalLimit:clampInt(raw.retrievalLimit,1,50,LIBRARY_SETTINGS_DEFAULTS.retrievalLimit),
+    retrievalMaxChars:clampInt(raw.retrievalMaxChars,500,50000,LIBRARY_SETTINGS_DEFAULTS.retrievalMaxChars),
+    analysisMaxItems:clampInt(raw.analysisMaxItems,1,500,LIBRARY_SETTINGS_DEFAULTS.analysisMaxItems),
+    analysisMaxCharacters:clampInt(raw.analysisMaxCharacters,10000,10000000,LIBRARY_SETTINGS_DEFAULTS.analysisMaxCharacters)
+  };
+  await saveLibrary(workspaceId,state);
+  return {settings:state.settings,safeguards:LIBRARY_SAFEGUARDS,canManage:true};
 }
 
 export async function presentLibrary(user:OrbitUser,workspaceId:string) {
