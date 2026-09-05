@@ -1,3 +1,4 @@
+import { json } from '@sveltejs/kit';
 import { requireUser } from '$lib/server/auth';
 import { assertPanelLicensed } from '$lib/server/license';
 import { visibleWorkspaces } from '$lib/server/workspaces';
