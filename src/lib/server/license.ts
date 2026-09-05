@@ -5,6 +5,7 @@ import { getSupabaseAdmin } from '$lib/server/supabase';
 export const PANEL_COMPONENT = 'orbitfs_panel';
 const LICENSE_ID = 'primary';
 const DEFAULT_PROVIDER = 'https://orbitfs.vercel.app/api/license/v1';
+const DEFAULT_VALIDATE_PATH = '/validate';
 export const ALLOWED_LICENSE_API_BASES = [
 	'https://orbitfs.vercel.app/api/license/v1'
 ] as const;
@@ -121,7 +122,7 @@ export async function getLicenseProviderDiagnostics() {
 	const providerBase = row ? providerBaseFromRow(row) : environmentBase;
 	let provider = { ok: false, status: null as number | null, revision: null as string | null, error: null as string | null };
 	try {
-		const response = await fetch(providerBase, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const response = await fetch(`${providerBase}${DEFAULT_VALIDATE_PATH}`, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
 		const payload = await response.json().catch(() => ({}));
 		provider = {
 			ok: response.status < 500,
@@ -134,8 +135,8 @@ export async function getLicenseProviderDiagnostics() {
 	}
 	return {
 		providerBase,
-		validatePath: '',
-		validateUrl: providerBase,
+		validatePath: DEFAULT_VALIDATE_PATH,
+		validateUrl: `${providerBase}${DEFAULT_VALIDATE_PATH}`,
 		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
 		database,
 		provider,
