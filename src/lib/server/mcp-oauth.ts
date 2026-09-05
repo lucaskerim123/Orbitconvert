@@ -111,3 +111,25 @@ export async function exchangeRefreshToken(input: { refreshToken: string; client
 	await db.from('mcp_oauth_tokens').update({ revoked_at: new Date().toISOString() }).eq('access_token_hash', row.access_token_hash);
 	return storeTokens(row.client_id, row.user_id, row.scope, row.resource);
 }
+
+
+export async function authenticateMcpAccessToken(request: Request) {
+	const header = request.headers.get('authorization') || '';
+	const match = /^Bearer\s+(.+)$/i.exec(header);
+	if (!match) throw Object.assign(new Error('MCP bearer token required'), { status: 401, code: 'MCP_AUTH_REQUIRED' });
+	const tokenHash = sha256(match[1]);
+	const db = getSupabaseAdmin();
+	const { data: token, error } = await db.from('mcp_oauth_tokens').select('*').eq('access_token_hash', tokenHash).maybeSingle();
+	if (error) throw error;
+	if (!token || token.revoked_at || new Date(token.expires_at).getTime() <= Date.now()) {
+		throw Object.assign(new Error('Invalid or expired MCP access token'), { status: 401, code: 'MCP_TOKEN_INVALID' });
+	}
+	if (token.resource !== MCP_RESOURCE) throw Object.assign(new Error('MCP token resource mismatch'), { status: 401, code: 'MCP_RESOURCE_MISMATCH' });
+	const { data: user, error: userError } = await db.from('orbitfs_users')
+		.select('id,username,display_name,email,role,status,avatar_url,permissions,must_change_pin,ban_reason')
+		.eq('id', token.user_id).maybeSingle();
+	if (userError) throw userError;
+	if (!user || user.status !== 'active') throw Object.assign(new Error('MCP user is unavailable'), { status: 403, code: 'MCP_USER_INACTIVE' });
+	void db.from('mcp_oauth_tokens').update({ last_used_at: new Date().toISOString() }).eq('access_token_hash', tokenHash);
+	return { user, token, scopes: new Set(String(token.scope || '').split(/\s+/).filter(Boolean)) };
+}
