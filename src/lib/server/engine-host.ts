@@ -7,8 +7,8 @@ export function engineBaseUrl() {
 }
 
 function engineSecret() {
-	const secret = String(env.ORBITFS_ENGINE_SECRET || '').trim();
-	if (!secret) throw Object.assign(new Error('ORBITFS_ENGINE_SECRET is not configured'), { status: 503, code: 'ENGINE_SECRET_MISSING' });
+	const secret = String(env.ORBITFS_ENGINE_SECRET || env.ORBITFS_DB_SECRET || '').trim();
+	if (!secret) throw Object.assign(new Error('OrbitFS engine server credential is not configured'), { status: 503, code: 'ENGINE_SECRET_MISSING' });
 	return secret;
 }
 
