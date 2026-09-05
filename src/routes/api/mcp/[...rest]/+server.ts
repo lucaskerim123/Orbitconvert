@@ -6,19 +6,28 @@ import { getSupabaseAdmin } from '$lib/server/supabase';
 const now = () => new Date().toISOString();
 
 async function runtimePayload() {
-	const db = getSupabaseAdmin();
 	const addon = await getMcpAddonRow();
-	const { data: runtime, error: runtimeError } = await db.from('mcp_runtime_state').select('*').eq('id', 1).maybeSingle();
-	if (runtimeError) throw runtimeError;
 	let licensed = false;
 	try { await assertMcpLicensed(); licensed = true; } catch {}
-	const serviceStatus = String(runtime?.service_status || 'online');
 	return {
-		online: addon?.installed === true && addon?.attached === true && addon?.status !== 'uninstalled' && serviceStatus === 'online',
-		serviceStatus, lastChangedAt: runtime?.updated_at || null, mode: runtime?.mode || 'workspace',
-		workspaceIntegration: runtime?.workspace_addon_active !== false, connectorPath: '/mcp', licensed,
-		attached: addon?.attached === true, installed: addon?.installed === true,
-		publicBaseUrl: addon?.deployment_url || 'https://orbitfsmcp.vercel.app', compute: 'vercel', database: 'supabase'
+		online: false,
+		state: addon?.installed === true && addon?.attached === true && licensed ? 'standby' : 'stopped',
+		serviceStatus: addon?.installed === true && addon?.attached === true && licensed ? 'standby' : 'stopped',
+		running: false,
+		standby: addon?.installed === true && addon?.attached === true && licensed,
+		operational: addon?.installed === true && addon?.attached === true && licensed,
+		residentProcess: false,
+		mode: 'serverless',
+		workspaceIntegration: true,
+		connectorPath: '/mcp',
+		licensed,
+		attached: addon?.attached === true,
+		installed: addon?.installed === true,
+		publicBaseUrl: addon?.deployment_url || 'https://orbitfsmcp.vercel.app',
+		compute: 'vercel',
+		database: 'supabase',
+		filesystem: false,
+		detail: 'MCP is request-driven. Standby means configured and ready; no resident daemon is claimed to be running.'
 	};
 }
 
@@ -43,18 +52,18 @@ async function dcrPayload() {
 }
 
 async function localRuntimeControl(action: string, actorUserId: string) {
-	if (!['start', 'stop', 'restart'].includes(action)) throw error(400, 'Invalid MCP control action');
-	const db = getSupabaseAdmin();
-	if (action === 'restart') {
-		const restarting = await db.from('mcp_runtime_state').update({ service_status: 'restarting', updated_at: now() }).eq('id', 1);
-		if (restarting.error) throw restarting.error;
-		await auditMcp('runtime.restarting', {}, actorUserId);
-	}
-	const serviceStatus = action === 'stop' ? 'stopped' : 'online';
-	const result = await db.from('mcp_runtime_state').update({ service_status: serviceStatus, updated_at: now() }).eq('id', 1).select('*').single();
-	if (result.error) throw result.error;
-	await auditMcp(`runtime.${action}`, { service_status: serviceStatus }, actorUserId);
-	return json({ ok: true, action, serviceStatus, runtime: result.data, status: await runtimePayload() });
+	if (!['status','start','stop','restart'].includes(action)) throw error(400, 'Invalid MCP control action');
+	const status = await runtimePayload();
+	if (action === 'status') return json({ ok:true, action, status });
+	await auditMcp('runtime.control_rejected', { action, mode:'serverless', state:status.state }, actorUserId);
+	return json({
+		error:`MCP cannot be ${action}ed as a resident service in Vercel serverless mode.`,
+		action,
+		status,
+		note: status.state === 'standby'
+			? 'MCP is already ready for request-driven work. There is no daemon to start, stop or restart.'
+			: 'MCP must be installed, attached and licensed before it can accept requests.'
+	}, { status:409 });
 }
 
 async function proxy({ request, params, cookies, url }: Parameters<RequestHandler>[0]) {
