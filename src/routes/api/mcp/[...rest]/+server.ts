@@ -2,6 +2,7 @@ import { error, json, type RequestHandler } from '@sveltejs/kit';
 import { requireAdmin, requireUser } from '$lib/server/auth';
 import { assertMcpLicensed, auditMcp, getMcpAddonRow } from '$lib/server/mcp-cloud';
 import { getSupabaseAdmin } from '$lib/server/supabase';
+import { getEngineStatus, controlEngine } from '$lib/server/engine-host';
 
 const now = () => new Date().toISOString();
 
@@ -9,25 +10,35 @@ async function runtimePayload() {
 	const addon = await getMcpAddonRow();
 	let licensed = false;
 	try { await assertMcpLicensed(); licensed = true; } catch {}
+	let engine:any = null;
+	try { engine = await getEngineStatus('mcp'); } catch (error:any) {
+		engine = { mode:'unreachable', error:String(error?.message || 'Engine host unavailable') };
+	}
+	const ready = addon?.installed === true && addon?.attached === true && licensed;
 	return {
-		online: false,
-		state: addon?.installed === true && addon?.attached === true && licensed ? 'standby' : 'stopped',
-		serviceStatus: addon?.installed === true && addon?.attached === true && licensed ? 'standby' : 'stopped',
-		running: false,
-		standby: addon?.installed === true && addon?.attached === true && licensed,
-		operational: addon?.installed === true && addon?.attached === true && licensed,
+		online: ready && engine?.mode === 'running',
+		state: ready ? (engine?.mode || 'unreachable') : 'stopped',
+		serviceStatus: ready ? (engine?.mode || 'unreachable') : 'stopped',
+		running: ready && engine?.mode === 'running',
+		standby: ready && engine?.mode === 'standby',
+		stopped: !ready || engine?.mode === 'stopped',
+		operational: ready && ['running','standby'].includes(String(engine?.mode || '')),
 		residentProcess: false,
-		mode: 'serverless',
+		mode: 'serverless-engine-host',
 		workspaceIntegration: true,
 		connectorPath: '/mcp',
 		licensed,
 		attached: addon?.attached === true,
 		installed: addon?.installed === true,
-		publicBaseUrl: addon?.deployment_url || 'https://orbitfsmcp.vercel.app',
+		publicBaseUrl: addon?.deployment_url || 'https://orbitconvert-mcp-addon.vercel.app',
 		compute: 'vercel',
 		database: 'supabase',
 		filesystem: false,
-		detail: 'MCP is request-driven. Standby means configured and ready; no resident daemon is claimed to be running.'
+		generation: engine?.generation ?? null,
+		lastRequestAt: engine?.lastRequestAt ?? null,
+		lastControlAt: engine?.lastControlAt ?? null,
+		engineError: engine?.error ?? null,
+		detail: 'Engine state is controlled from the main OrbitFS site and enforced by the private add-on engine host.'
 	};
 }
 
@@ -42,9 +53,9 @@ async function dcrPayload() {
 	const tokenCounts = new Map<string, number>();
 	for (const row of activeTokens.data || []) tokenCounts.set(row.client_id, (tokenCounts.get(row.client_id) || 0) + 1);
 	return {
-		enabled: true, standard: 'RFC 7591', registrationEndpoint: 'https://orbitfsproject.vercel.app/oauth/register',
-		authorizationServerMetadata: 'https://orbitfsproject.vercel.app/.well-known/oauth-authorization-server',
-		protectedResourceMetadata: 'https://orbitfsmcp.vercel.app/.well-known/oauth-protected-resource',
+		enabled: true, standard: 'RFC 7591', registrationEndpoint: 'https://orbitconvert.vercel.app/oauth/register',
+		authorizationServerMetadata: 'https://orbitconvert.vercel.app/.well-known/oauth-authorization-server',
+		protectedResourceMetadata: 'https://orbitconvert-mcp-addon.vercel.app/.well-known/oauth-protected-resource',
 		pkce: 'S256', tokenEndpointAuthMethod: 'none', supportedApplicationTypes: ['web', 'native'],
 		registeredClients: (clients.data || []).length,
 		clients: (clients.data || []).map((row: any) => ({ ...row, activeTokens: tokenCounts.get(row.client_id) || 0 }))
@@ -52,18 +63,17 @@ async function dcrPayload() {
 }
 
 async function localRuntimeControl(action: string, actorUserId: string) {
-	if (!['status','start','stop','restart'].includes(action)) throw error(400, 'Invalid MCP control action');
-	const status = await runtimePayload();
-	if (action === 'status') return json({ ok:true, action, status });
-	await auditMcp('runtime.control_rejected', { action, mode:'serverless', state:status.state }, actorUserId);
-	return json({
-		error:`MCP cannot be ${action}ed as a resident service in Vercel serverless mode.`,
-		action,
-		status,
-		note: status.state === 'standby'
-			? 'MCP is already ready for request-driven work. There is no daemon to start, stop or restart.'
-			: 'MCP must be installed, attached and licensed before it can accept requests.'
-	}, { status:409 });
+	const map:Record<string,'running'|'standby'|'stopped'|'restart'> = {
+		start:'running', run:'running', running:'running',
+		standby:'standby',
+		stop:'stopped', stopped:'stopped',
+		restart:'restart'
+	};
+	const engineAction = map[action];
+	if (!engineAction) throw error(400, 'Invalid MCP control action');
+	const result = await controlEngine('mcp', engineAction, actorUserId);
+	await auditMcp('runtime.control', { action, engineAction, state:result?.mode }, actorUserId);
+	return json({ ok:true, action, status:await runtimePayload() });
 }
 
 async function proxy({ request, params, cookies, url }: Parameters<RequestHandler>[0]) {
