@@ -2,7 +2,7 @@ import { randomUUID, verify } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 
-export const PANEL_COMPONENT = 'orbitfs_panel';
+export const PANEL_COMPONENT = 'orbitfs_base';
 const LICENSE_ID = 'primary';
 const DEFAULT_PROVIDER = 'https://orbitfs.vercel.app/api/license/v1';
 const DEFAULT_VALIDATE_PATH = '/validate';
@@ -142,7 +142,7 @@ export async function getLicenseProviderDiagnostics(providerOverride?: string) {
 	const providerBase = providerOverride ? normalizeApprovedProviderBase(providerOverride) : (row ? providerBaseFromRow(row) : environmentBase);
 	let provider = { ok: false, status: null as number | null, revision: null as string | null, error: null as string | null };
 	try {
-		const response = await fetch(`${providerBase}${DEFAULT_VALIDATE_PATH}`, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const response = await fetch(`${providerBase}/health`, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
 		const payload = await response.json().catch(() => ({}));
 		provider = {
 			ok: response.status < 500,
@@ -258,20 +258,32 @@ function unlicensedSummary(installationId: string, row: LicenseRow | null, reaso
 	};
 }
 
-async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [PANEL_COMPONENT, 'orbitfs_mcp']) {
+async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [PANEL_COMPONENT]) {
 	if (!licenseKey) throw Object.assign(new Error('Licence key is required'), { code: 'LICENSE_KEY_REQUIRED', status: 400 });
 	const row = await getRow();
 	const providerBase = providerBaseFromRow(row);
 	const headers: Record<string, string> = { 'content-type': 'application/json' };
 	const token = String(env.ORBITFS_LICENSE_API_TOKEN || '').trim();
 	if (token) headers.authorization = `Bearer ${token}`;
-	const response = await fetch(providerBase, {
+	const payload = { licenseKey, installationId, components, deviceName: 'OrbitFS Vercel', platform: 'vercel', appVersion: 'cloud' };
+
+	if (activate) {
+		const activation = await fetch(`${providerBase}/activate`, {
+			method: 'POST', headers,
+			body: JSON.stringify(payload),
+			signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
+		});
+		const activationBody = await activation.json().catch(() => ({}));
+		if (!activation.ok) throw Object.assign(new Error(activationBody.error || activationBody.message || `Licence activation returned ${activation.status}`), { code: activationBody.code || 'LICENSE_ACTIVATION_ERROR', status: activation.status < 500 ? activation.status : 503 });
+	}
+
+	const response = await fetch(`${providerBase}/validate`, {
 		method: 'POST', headers,
-		body: JSON.stringify({ licenseKey, installationId, components, activate }),
+		body: JSON.stringify({ ...payload, activate: false }),
 		signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
 	});
 	const body = await response.json().catch(() => ({}));
-	if (!response.ok) throw Object.assign(new Error(body.error || body.message || `Licence API returned ${response.status}`), { code: body.code || 'LICENSE_PROVIDER_ERROR', status: response.status < 500 ? response.status : 503 });
+	if (!response.ok) throw Object.assign(new Error(body.error || body.message || `Licence validation returned ${response.status}`), { code: body.code || 'LICENSE_PROVIDER_ERROR', status: response.status < 500 ? response.status : 503 });
 	if (!body.entitlement) throw Object.assign(new Error('Licence API returned no signed entitlement'), { code: 'LICENSE_UNSIGNED_RESPONSE', status: 503 });
 	return { payload: await verifyEntitlement(body.entitlement, installationId, providerBase, false), entitlement: String(body.entitlement) };
 }
