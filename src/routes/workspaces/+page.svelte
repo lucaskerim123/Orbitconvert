@@ -945,6 +945,7 @@
 
 					{:else if tab === 'settings'}
 						<div class="grid gap-4 xl:grid-cols-2">
+							<Card class="xl:col-span-2"><CardHeader><CardTitle>Knowledge setup</CardTitle><CardDescription>Configure global authority, project context and routing for this workspace.</CardDescription></CardHeader><CardContent class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"><p class="text-sm text-muted-foreground">Stored in Supabase and synced into the Base Library. Folder selections remain editable per file.</p><Button onclick={() => goto(`/knowledge-setup?workspace=${encodeURIComponent(selected.id)}`)}>Open Knowledge Setup</Button></CardContent></Card>
 							<Card><CardHeader><CardTitle>General settings</CardTitle><CardDescription>Workspace identity and owner-managed settings.</CardDescription></CardHeader><CardContent class="grid gap-4">
 								<label class="space-y-1 text-sm"><span>Name</span><Input bind:value={settingsName} /></label>
 								<label class="space-y-1 text-sm"><span>Description</span><Input bind:value={settingsDescription} /></label>
