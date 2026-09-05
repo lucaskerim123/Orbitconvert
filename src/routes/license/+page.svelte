@@ -3,7 +3,7 @@
 	import { KeyRound, LoaderCircle, RefreshCw, ShieldCheck, ExternalLink } from '@lucide/svelte';
 
 	let summary = $state<any>(null);
-	let provider = $state<{ providerBase: string; allowedProviderBases: string[] } | null>(null);
+	let provider = $state<{ providerBase: string; allowedProviderBases: string[]; licenseSystems?: { id:string; name:string; description:string; providerBase:string }[] } | null>(null);
 	let providerInput = $state('');
 	let providerSaving = $state(false);
 	let providerTesting = $state(false);
@@ -81,12 +81,16 @@
 		providerTesting = true;
 		providerError = '';
 		try {
-			const response = await fetch('/api/license/diagnostics', { cache: 'no-store' });
+			const response = await fetch('/api/license/provider/test', {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ providerBase: providerInput })
+			});
 			const payload = await response.json();
 			if (!response.ok) throw new Error(payload.error || 'Licence API test failed');
 			diagnostics = payload;
 			if (!provider) {
-				provider = { providerBase: payload.providerBase, allowedProviderBases: payload.allowedProviderBases || [] };
+				provider = { providerBase: payload.providerBase, allowedProviderBases: payload.allowedProviderBases || [], licenseSystems: payload.licenseSystems || [] };
 				providerInput = payload.providerBase;
 			}
 			message = payload.provider?.ok ? 'Licence API connection is working.' : 'Licence API responded with a problem. See diagnostics below.';
@@ -104,6 +108,17 @@
 		activating = true;
 		adminLoginRequired = false;
 		try {
+			if (provider && providerInput && providerInput !== provider.providerBase) {
+				const saveResponse = await fetch('/api/license/provider', {
+					method: 'PUT',
+					headers: { 'content-type': 'application/json' },
+					body: JSON.stringify({ providerBase: providerInput })
+				});
+				const savePayload = await saveResponse.json();
+				if (!saveResponse.ok) throw new Error(savePayload.error || 'Could not select licence system');
+				provider = savePayload;
+				providerInput = savePayload.providerBase;
+			}
 			const response = await fetch('/api/license/activate', {
 				method: 'POST',
 				headers: { 'content-type': 'application/json' },
@@ -158,17 +173,21 @@
 			<div class="mt-6 rounded-xl border bg-background/40 p-4">
 				<div class="flex flex-wrap items-start justify-between gap-3">
 					<div>
-						<label class="block text-sm font-medium" for="license-api">Licence API</label>
-						<p class="mt-1 text-xs text-muted-foreground">Only approved Incendiary Networks endpoints are accepted. This setting is available even when the installation is unlicensed.</p>
+						<label class="block text-sm font-medium" for="license-api">Licence system</label>
+						<p class="mt-1 text-xs text-muted-foreground">Choose the approved OrbitFS licensing service this installation will use. The selection can be tested before activation and arbitrary external licensing servers are blocked.</p>
 					</div>
 					<button class="inline-flex h-9 items-center gap-2 rounded-md border px-3 text-xs font-medium hover:bg-muted disabled:opacity-50" type="button" onclick={testProvider} disabled={providerTesting}>{#if providerTesting}<LoaderCircle class="size-3.5 animate-spin" />{:else}<RefreshCw class="size-3.5" />{/if} Test API</button>
 				</div>
 				{#if provider}
 					<div class="mt-3 flex flex-col gap-2 sm:flex-row">
 						<select id="license-api" class="h-10 flex-1 rounded-md border border-input bg-background px-3 text-sm" bind:value={providerInput}>
-							{#each provider.allowedProviderBases as url}<option value={url}>{url}</option>{/each}
+							{#if provider.licenseSystems?.length}
+								{#each provider.licenseSystems as system}<option value={system.providerBase}>{system.name} — {system.providerBase}</option>{/each}
+							{:else}
+								{#each provider.allowedProviderBases as url}<option value={url}>{url}</option>{/each}
+							{/if}
 						</select>
-						<button class="inline-flex h-10 items-center justify-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50" type="button" onclick={saveProvider} disabled={providerSaving || providerInput === provider.providerBase}>{#if providerSaving}<LoaderCircle class="size-4 animate-spin" />{/if} Save API</button>
+						<button class="inline-flex h-10 items-center justify-center gap-2 rounded-md border px-4 text-sm font-medium hover:bg-muted disabled:opacity-50" type="button" onclick={saveProvider} disabled={providerSaving || providerInput === provider.providerBase}>{#if providerSaving}<LoaderCircle class="size-4 animate-spin" />{/if} Use this system</button>
 					</div>
 				{:else}
 					<p class="mt-3 rounded-md border p-3 font-mono text-xs text-muted-foreground">Provider settings could not be loaded. Use Test API for diagnostics.</p>
@@ -193,8 +212,8 @@
 			</form>
 
 			<div class="mt-6 border-t pt-5 text-sm text-muted-foreground">
-				<p>Licences are issued and managed by the existing external licensing system. This OrbitFS deployment does not create licences.</p>
-				<a class="mt-2 inline-flex items-center gap-1 font-medium text-primary hover:underline" href="https://licenseadmin.incendiarynetworks.cc/" target="_blank" rel="noreferrer">Open licence administration <ExternalLink class="size-3.5" /></a>
+				<p>Licences are issued by the official OrbitFS licensing system. This installation only validates and activates licences; it does not create them.</p>
+				<a class="mt-2 inline-flex items-center gap-1 font-medium text-primary hover:underline" href="https://orbitfs.vercel.app/" target="_blank" rel="noreferrer">Open OrbitFS licensing website <ExternalLink class="size-3.5" /></a>
 			</div>
 		{/if}
 	</section>
