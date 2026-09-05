@@ -15,7 +15,6 @@
 	let activating = $state(false);
 	let error = $state('');
 	let message = $state('');
-	let adminLoginRequired = $state(false);
 
 	async function loadProvider() {
 		try {
@@ -106,7 +105,6 @@
 		error = '';
 		message = '';
 		activating = true;
-		adminLoginRequired = false;
 		try {
 			if (provider && providerInput && providerInput !== provider.providerBase) {
 				const saveResponse = await fetch('/api/license/provider', {
@@ -126,7 +124,6 @@
 			});
 			const payload = await response.json();
 			if (!response.ok) {
-				if (response.status === 401) adminLoginRequired = true;
 				throw new Error(payload.error || 'Licence activation failed');
 			}
 			summary = payload.license;
@@ -167,7 +164,7 @@
 			</div>
 
 			{#if summary?.reason && !summary?.licensed}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{summary.reason}{#if summary.refreshError}<span class="mt-1 block text-xs opacity-80">{summary.refreshError}</span>{/if}</div>{/if}
-			{#if error}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}{#if adminLoginRequired}<a class="mt-3 inline-flex rounded-md border border-destructive/40 px-3 py-2 text-xs font-medium hover:bg-destructive/10" href="/login?next=%2Flicense">Admin login to replace licence</a>{/if}</div>{/if}
+			{#if error}<div class="mt-4 rounded-lg border border-destructive/40 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</div>{/if}
 			{#if message}<div class="mt-4 rounded-lg border px-4 py-3 text-sm">{message}</div>{/if}
 
 			<div class="mt-6 rounded-xl border bg-background/40 p-4">
