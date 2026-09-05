@@ -50,6 +50,12 @@ function mergeStudioSettings(value:any={}){
   const v=value&&typeof value==='object'?value:{};
   return {...STUDIO_SETTINGS_DEFAULTS,...v,analysisPolicy:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy,...(v.analysisPolicy||{}),weights:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.weights,...(v.analysisPolicy?.weights||{})},limits:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.limits,...(v.analysisPolicy?.limits||{})},providers:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.providers,...(v.analysisPolicy?.providers||{})}}};
 }
+export async function getStudioRuntimeSettings(){
+  const db=getSupabaseAdmin();
+  const r=await db.from('studio_settings').select('settings_json,updated_at').eq('workspace_id','__global__').maybeSingle();
+  if(r.error) throw r.error;
+  return mergeStudioSettings(r.data?.settings_json||{});
+}
 export async function getStudioAdminSettings(user:OrbitUser){
   if(!isSystemAdmin(user)) throw fail('System Owner or Admin required',403);
   const db=getSupabaseAdmin();
@@ -95,8 +101,12 @@ export function studioEngineState(){
 }
 
 export function studioSchema(){return {
-  entryTypes:['general','journal','note','profile-record','incident','timeline','evidence','reference'],
-  categories:['general','personal','work','project','legal','mental-health','court','research','reference']
+  entryTypes:['general','note','letter','document','profile-record','statement','report','evidence','incident','timeline','reference','research'],
+  journalTypes:['standard','daily','personal','incident','mental-health','court','legal','work','project','research','meeting'],
+  documentTypes:['general','note','statement','letter','report','evidence','incident','timeline','profile-record','reference','research','document'],
+  categories:['general','personal','mental-health','legal','court','work','project','research','evidence','reference'],
+  metadataFields:['tags','profileIds','profileTargetId','profileSectionId','category','purpose','audience','source','language','chatgptThreadId','mcpSessionId'],
+  compactListing:true,revisions:true,sessions:true,links:true,templates:true
 };}
 
 function compactDocument(row:any){return {...row,metadata_json:row.metadata_json||{},profile_ids:row.profile_ids||[],access:row.access};}
@@ -147,7 +157,7 @@ export async function createStudioDocument(user:OrbitUser,workspaceId:string,inp
   const ownerUserId=clean(input.ownerUserId)||user.id, subtype=clean(input.subtype||input.type)||'general';
   const row:any={workspace_id:workspaceId,kind,subtype,title,status:'draft',content_format:'md',content_text:String(input.content||''),summary:clean(input.summary)||null,
     entry_date:clean(input.entryDate)||null,current_revision:1,owner_user_id:ownerUserId,created_by_user_id:user.id,created_by:user.username,visibility:'private',
-    profile_ids:Array.isArray(input.profileIds)?input.profileIds.map(String):[],save_location:clean(input.saveLocation),metadata_json:{category:clean(input.category)||'general',profileTargetId:clean(input.profileTargetId),profileSectionId:clean(input.profileSectionId)||'records',tags:Array.isArray(input.tags)?input.tags:[]}};
+    profile_ids:Array.isArray(input.profileIds)?input.profileIds.map(String):[],save_location:'',metadata_json:{category:clean(input.category)||'general',profileTargetId:clean(input.profileTargetId),profileSectionId:clean(input.profileSectionId)||'records',tags:Array.isArray(input.tags)?input.tags:[]}};
   const saved=await db.from('studio_documents').insert(row).select('*').single();if(saved.error) throw saved.error;
   const rev=await db.from('studio_revisions').insert({document_id:saved.data.id,revision_no:1,content_text:row.content_text,content_hash:hash(row.content_text),change_note:'Created',created_by:user.username});if(rev.error) throw rev.error;
   return {item:compactDocument({...saved.data,access:{canRead:true,canEdit:true,canManageShares:true}})};
@@ -157,7 +167,7 @@ export async function updateStudioDocument(user:OrbitUser,workspaceId:string,id:
   const db=getSupabaseAdmin(),nextContent=input.content===undefined?String(doc.content_text||''):String(input.content||'');
   const nextRevision=Number(doc.current_revision||1)+1, metadata={...(doc.metadata_json||{})};
   if(input.category!==undefined)metadata.category=clean(input.category)||'general';if(input.profileTargetId!==undefined)metadata.profileTargetId=clean(input.profileTargetId);if(input.profileSectionId!==undefined)metadata.profileSectionId=clean(input.profileSectionId)||'records';if(input.tags!==undefined)metadata.tags=Array.isArray(input.tags)?input.tags:[];
-  const patch:any={title:clean(input.title)||doc.title,subtype:clean(input.subtype||input.type)||doc.subtype,content_text:nextContent,summary:input.summary===undefined?doc.summary:clean(input.summary)||null,entry_date:input.entryDate===undefined?doc.entry_date:(clean(input.entryDate)||null),profile_ids:Array.isArray(input.profileIds)?input.profileIds.map(String):doc.profile_ids,save_location:input.saveLocation===undefined?doc.save_location:clean(input.saveLocation),metadata_json:metadata,current_revision:nextRevision,updated_at:now()};
+  const patch:any={title:clean(input.title)||doc.title,subtype:clean(input.subtype||input.type)||doc.subtype,content_text:nextContent,summary:input.summary===undefined?doc.summary:clean(input.summary)||null,entry_date:input.entryDate===undefined?doc.entry_date:(clean(input.entryDate)||null),profile_ids:Array.isArray(input.profileIds)?input.profileIds.map(String):doc.profile_ids,save_location:'',metadata_json:metadata,current_revision:nextRevision,updated_at:now()};
   const saved=await db.from('studio_documents').update(patch).eq('id',id).eq('workspace_id',workspaceId).select('*').single();if(saved.error)throw saved.error;
   const rev=await db.from('studio_revisions').insert({document_id:id,revision_no:nextRevision,content_text:nextContent,content_hash:hash(nextContent),change_note:clean(input.changeNote)||'Edited',created_by:user.username});if(rev.error)throw rev.error;
   return {item:compactDocument({...saved.data,access:doc.access})};
