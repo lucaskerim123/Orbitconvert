@@ -1,17 +1,15 @@
 <script lang="ts">
 	import { api, ApiError } from '$lib/api';
 	import { workspace } from '$lib/workspace.svelte';
-	import PathPicker from '$lib/components/path-picker.svelte';
 	import ProfileManager from '$lib/components/library/profile-manager.svelte';
 	import ContextLibraryPanel from '$lib/components/mcp/context-library-panel.svelte';
 	import { Button, Card, CardContent, CardHeader, CardTitle, Input } from '$lib/components/ui';
-	import { Archive, Boxes, ContactRound, File as FileIcon, Folder, LibraryBig, Link2, LoaderCircle, Network, Plus, RefreshCw, Save, Search, Trash2 } from '@lucide/svelte';
+	import { Archive, Boxes, ContactRound, File as FileIcon, LibraryBig, Link2, LoaderCircle, Network, Plus, RefreshCw, Save, Search, Settings2, Trash2 } from '@lucide/svelte';
 
 	type Tab = 'knowledge' | 'approvals' | 'records' | 'ccs' | 'profiles' | 'timeline' | 'sections' | 'retrieve' | 'intelligence' | 'lineage' | 'links' | 'usage';
 	type ProfileSection = { id:string; title?:string; kind?:string; content?:string };
 	type Profile = { id: string; name: string; type?: string; sections?:ProfileSection[] };
 	type KnowledgeGroup = { id:string; name:string; description?:string; createdAt?:string; updatedAt?:string };
-	type ScanCandidate = { path:string; name:string; extension:string; size:number; modifiedAt:string; registered:boolean; itemId?:string|null; itemName?:string|null; indexable:boolean };
 	type KnowledgeItem = {
 		id: string; kind: string; name: string; description?: string; category?: string; groupId?: string | null;
 		tags?: string[]; purposes?: string[]; aliases?: string[]; roles?: string[]; lifecycleState?: string; loadMode?: string; targetPriority?: number; currentTarget?: boolean; importance?: number; status: string; visibility?: string; viewerIds?: string[]; editorIds?: string[]; ownerUserId?: string; versionLabel?: string; guards?: { sourceWriteLocked?:boolean; metadataLocked?:boolean; indexingLocked?:boolean; removalLocked?:boolean };
@@ -49,11 +47,10 @@
 	let groupFilter = $state('all'), lifecycleFilter = $state('all'), roleFilter = $state('all'), attentionOnly = $state(false), coreOnly = $state(false), newGroupName = $state(''), registerGroupId = $state(''), editGroupId = $state('');
 	let selectedKnowledgeIds = $state<string[]>([]), bulkGroupId = $state('');
 	let selectedItemId = $state('');
-	let registerKind = $state<'file' | 'folder' | 'profile'>('file');
-	let registerPath = $state(''), registerProfileId = $state('');
+	let registerKind = $state<'knowledge' | 'profile'>('knowledge');
+	let registerProfileId = $state(''), registerContent = $state('');
 	let registerName = $state(''), registerDescription = $state(''), registerCategory = $state('');
 	let registerTags = $state(''), registerPurposes = $state(''), registerRoles = $state<string[]>([]), registerLifecycle = $state('unclassified'), registerVisibility = $state('workspace'), registerSharedIds = $state<string[]>([]), registerCustomPurpose = $state('');
-	let scanBusy = $state(false), scanCandidates = $state<ScanCandidate[]>([]), scanSelected = $state<string[]>([]), scanQuery = $state(''), scanShowRegistered = $state(false), scanDone = $state(false);
 
 	let linkSourceId = $state(''), linkTargetId = $state(''), linkRelation = $state('related_to');
 	let sectionQuery = $state(''), sectionItemId = $state(''), selectedSectionId = $state(''), selectedSectionContent = $state('');
@@ -102,11 +99,6 @@
 			.some((value) => String(value || '').toLowerCase().includes(q));
 	}));
 	const filteredApprovals = $derived(changeRequests.filter((request) => approvalStatus === 'all' || (approvalStatus === 'active' ? ['pending','needs_target','approved','applying'].includes(request.status) : request.status === approvalStatus)));
-	const filteredScanCandidates = $derived(scanCandidates.filter((candidate) => {
-		if (!scanShowRegistered && candidate.registered) return false;
-		const q = scanQuery.trim().toLowerCase();
-		return !q || candidate.path.toLowerCase().includes(q) || candidate.extension.toLowerCase().includes(q);
-	}));
 	const filteredSections = $derived((data?.sections || []).filter((section) => {
 		if (sectionItemId && section.itemId !== sectionItemId) return false;
 		const q = sectionQuery.trim().toLowerCase();
@@ -271,35 +263,6 @@
 		catch(err){ fail(err, action==='change'?'Could not create revision':action==='remove'?'Could not create removal request':'Could not create restore request'); }
 		finally{ busy=false; }
 	}
-	async function scanWorkspaceFiles() {
-		if (!data?.canManage || !currentWorkspaceId()) return;
-		scanBusy = true; error = ''; message = '';
-		try {
-			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/scan`, { maxFiles:3000 });
-			scanCandidates = result.candidates || []; scanSelected = []; scanDone = true;
-			message = `Scan reviewed ${result.visitedFiles || 0} files and found ${result.newCount || 0} new Knowledge candidates${result.truncated ? ' (result limit reached)' : ''}.`;
-		} catch (err) { fail(err, 'Could not scan workspace files'); }
-		finally { scanBusy = false; }
-	}
-	function toggleScanCandidate(candidate: ScanCandidate) {
-		if (candidate.registered) return;
-		scanSelected = scanSelected.includes(candidate.path) ? scanSelected.filter((value) => value !== candidate.path) : [...scanSelected, candidate.path].slice(0, 100);
-	}
-	function selectVisibleScanCandidates() {
-		scanSelected = filteredScanCandidates.filter((candidate) => !candidate.registered).slice(0, 100).map((candidate) => candidate.path);
-	}
-	async function addScannedKnowledge() {
-		if (!data?.canManage || scanSelected.length === 0) return;
-		scanBusy = true; error = ''; message = '';
-		try {
-			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/scan-register`, { paths:scanSelected, index:true });
-			const mapped = new Map([...(result.added || []), ...(result.existing || [])].map((entry:any) => [entry.path, entry]));
-			scanCandidates = scanCandidates.map((candidate) => mapped.has(candidate.path) ? { ...candidate, registered:true, itemId:mapped.get(candidate.path)?.itemId || null, itemName:mapped.get(candidate.path)?.name || candidate.name } : candidate);
-			scanSelected = []; await refresh();
-			message = `Added ${result.added?.length || 0} file(s) to Knowledge and indexed them${result.errors?.length ? `; ${result.errors.length} failed` : ''}.`;
-		} catch (err) { fail(err, 'Could not add scanned files to Knowledge'); }
-		finally { scanBusy = false; }
-	}
 	async function exportLibrary() {
 		const workspaceId=currentWorkspaceId(); if(!workspaceId)return;
 		busy=true; error='';
@@ -332,21 +295,21 @@
 	function selectVisibleKnowledge(){ selectedKnowledgeIds = [...new Set([...selectedKnowledgeIds,...filteredItems.map((item)=>item.id)])]; }
 	function clearKnowledgeSelection(){ selectedKnowledgeIds = []; bulkGroupId=''; }
 	async function bulkPatchKnowledge(patch:any,label:string){ if(!data?.canManage||!selectedKnowledgeIds.length)return; busy=true; error=''; const results=await Promise.allSettled(selectedKnowledgeIds.map((id)=>api.patch(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/items/${encodeURIComponent(id)}`,patch))); const failed=results.filter((r)=>r.status==='rejected').length; message=failed ? `${label}: ${results.length-failed} updated, ${failed} failed.` : `${label}: ${results.length} updated.`; await refresh(); if(!failed)clearKnowledgeSelection(); busy=false; }
-	async function bulkDeleteKnowledge(){ if(!data?.canManage||!selectedKnowledgeIds.length||!confirm(`Remove ${selectedKnowledgeIds.length} selected Knowledge entries from Library? Source files are not deleted. Protected entries will be skipped.`))return; busy=true; error=''; const results=await Promise.allSettled(selectedKnowledgeIds.map((id)=>api.delete(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/items/${encodeURIComponent(id)}`))); const failed=results.filter((r)=>r.status==='rejected').length; message=failed ? `Bulk remove: ${results.length-failed} removed, ${failed} protected/failed.` : `Bulk remove: ${results.length} removed.`; await refresh(); selectedKnowledgeIds=failed ? selectedKnowledgeIds.filter((_,i)=>results[i].status==='rejected') : []; busy=false; }
+	async function bulkDeleteKnowledge(){ if(!data?.canManage||!selectedKnowledgeIds.length||!confirm(`Remove ${selectedKnowledgeIds.length} selected Knowledge entries from Library? Legacy source files, if any, are not deleted. Protected entries will be skipped.`))return; busy=true; error=''; const results=await Promise.allSettled(selectedKnowledgeIds.map((id)=>api.delete(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/items/${encodeURIComponent(id)}`))); const failed=results.filter((r)=>r.status==='rejected').length; message=failed ? `Bulk remove: ${results.length-failed} removed, ${failed} protected/failed.` : `Bulk remove: ${results.length} removed.`; await refresh(); selectedKnowledgeIds=failed ? selectedKnowledgeIds.filter((_,i)=>results[i].status==='rejected') : []; busy=false; }
 
 	async function registerKnowledge() {
 		const workspaceId = currentWorkspaceId();
 		if (!workspaceId || !data?.canManage) return;
-		if (registerKind !== 'profile' && !registerPath.trim()) return;
+		if (registerKind === 'knowledge' && !registerContent.trim()) return;
 		if (registerKind === 'profile' && !registerProfileId) return;
 		busy = true; error = ''; message = '';
 		try {
 			const body: any = { name: registerName, description: registerDescription, category: registerCategory, groupId: registerGroupId || null, tags: registerTags, purposes: registerPurposes, roles: registerRoles, lifecycleState: registerLifecycle, visibility: registerVisibility, viewerIds:registerVisibility === 'shared' ? registerSharedIds : [] };
 			if (registerKind === 'profile') Object.assign(body, { provider: 'base.profiles', profileId: registerProfileId });
-			else Object.assign(body, { provider: 'base.files', path: registerPath, sourceKind: registerKind });
+			else Object.assign(body, { provider: 'memory.knowledge', content: registerContent, contentFormat: 'markdown' });
 			const result = await api.post<any>(`/library/workspaces/${encodeURIComponent(workspaceId)}/items`, body);
-			message = result.existing ? 'That source is already registered. Opened the existing Knowledge Item.' : 'Knowledge Item registered.';
-			registerPath = ''; registerProfileId = ''; registerName = ''; registerDescription = ''; registerCategory = ''; registerGroupId = ''; registerTags = ''; registerPurposes = ''; registerRoles = []; registerLifecycle = 'unclassified'; registerCustomPurpose = ''; registerSharedIds = [];
+			message = result.existing ? 'That source is already registered. Opened the existing Knowledge Item.' : 'Knowledge Item created.';
+			registerContent = ''; registerProfileId = ''; registerName = ''; registerDescription = ''; registerCategory = ''; registerGroupId = ''; registerTags = ''; registerPurposes = ''; registerRoles = []; registerLifecycle = 'unclassified'; registerCustomPurpose = ''; registerSharedIds = [];
 			await refresh(); if (result.item?.id) beginEdit(data!.items.find((item) => item.id === result.item.id) || result.item);
 		} catch (err) { fail(err, 'Could not register knowledge'); }
 		finally { busy = false; }
@@ -380,7 +343,7 @@
 	}
 
 	async function removeItem(item: KnowledgeItem) {
-		if (!data?.canManage || !confirm(`Remove ${item.name} from Library? The source itself will not be deleted.`)) return;
+		if (!data?.canManage || !confirm(`Remove ${item.name} from Library? Legacy source material, if any, is not deleted.`)) return;
 		busy = true; error = '';
 		try { await api.delete(`/library/workspaces/${encodeURIComponent(currentWorkspaceId())}/items/${encodeURIComponent(item.id)}`); selectedItemId = ''; await refresh(); }
 		catch (err) { fail(err, 'Could not remove Knowledge Item'); }
@@ -543,23 +506,15 @@
 		</div>
 
 		{#if data.canManage}
-			<Card><CardHeader><CardTitle>Scan files for Knowledge</CardTitle></CardHeader><CardContent class="space-y-3">
-				<div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"><div><p class="text-sm">Review supported workspace files before adding anything.</p><p class="text-xs text-muted-foreground">Scanning never copies or registers files automatically. System/archive folders are skipped.</p></div><Button variant="outline" onclick={scanWorkspaceFiles} disabled={scanBusy}>{#if scanBusy}<LoaderCircle class="size-4 animate-spin" />{:else}<Search class="size-4" />{/if}Scan workspace</Button></div>
-				{#if scanDone}<div class="flex flex-col gap-2 sm:flex-row"><div class="relative min-w-0 flex-1"><Search class="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" /><Input class="pl-9" bind:value={scanQuery} placeholder="Filter scanned files" /></div><label class="flex items-center gap-2 rounded-md border px-3 py-2 text-sm"><input type="checkbox" bind:checked={scanShowRegistered} />Show already added</label></div>
-					<div class="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground"><span>{filteredScanCandidates.length} shown · {scanSelected.length}/100 selected</span><div class="flex gap-2"><Button size="sm" variant="outline" onclick={selectVisibleScanCandidates} disabled={scanBusy}>Select visible</Button><Button size="sm" variant="ghost" onclick={() => (scanSelected = [])} disabled={scanBusy || !scanSelected.length}>Clear</Button><Button size="sm" onclick={addScannedKnowledge} disabled={scanBusy || !scanSelected.length}><Plus class="size-4" />Add & index</Button></div></div>
-					<div class="max-h-[28rem] space-y-1 overflow-y-auto rounded-md border p-2">{#each filteredScanCandidates.slice(0, 300) as candidate}<label class="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-accent/50"><input class="mt-1" type="checkbox" checked={candidate.registered || scanSelected.includes(candidate.path)} disabled={candidate.registered || scanBusy} onchange={() => toggleScanCandidate(candidate)} /><div class="min-w-0 flex-1"><div class="flex flex-wrap items-center gap-2"><strong class="break-all text-sm">{candidate.path}</strong>{#if candidate.registered}<span class="rounded border px-1.5 py-0.5 text-[10px] text-muted-foreground">Already in Knowledge</span>{/if}</div><p class="text-xs text-muted-foreground">{candidate.extension.replace('.', '').toUpperCase()} · {Math.max(1, Math.round(candidate.size / 1024))} KB · modified {new Date(candidate.modifiedAt).toLocaleDateString()}</p></div></label>{/each}{#if filteredScanCandidates.length === 0}<p class="p-3 text-sm text-muted-foreground">No files match this review.</p>{/if}</div>
-					{#if filteredScanCandidates.length > 300}<p class="text-xs text-muted-foreground">Showing the first 300 matches. Use the filter to narrow the review.</p>{/if}
-				{/if}
-			</CardContent></Card>
-			<Card><CardHeader><CardTitle>Register existing knowledge</CardTitle></CardHeader><CardContent class="space-y-3">
+			<Card><CardHeader><CardTitle>Create or link Knowledge</CardTitle></CardHeader><CardContent class="space-y-3">
 				<div class="grid gap-2 md:grid-cols-[10rem_minmax(0,1fr)]">
 					<select class="rounded-md border bg-background p-2 text-sm" bind:value={registerKind}>
-						<option value="file">File</option><option value="folder">Folder</option><option value="profile">Profile</option>
+						<option value="knowledge">Knowledge / Memory</option><option value="profile">Profile</option>
 					</select>
 					{#if registerKind === 'profile'}
 						<select class="rounded-md border bg-background p-2 text-sm" bind:value={registerProfileId}><option value="">Select profile</option>{#each profiles as profile}<option value={profile.id}>{profile.name}</option>{/each}</select>
 					{:else}
-						<PathPicker bind:value={registerPath} workspaceId={currentWorkspaceId()} />
+						<textarea class="min-h-32 w-full rounded-md border bg-background p-3 text-sm" bind:value={registerContent} placeholder="Paste or write the knowledge to store in the workspace Library / Memory"></textarea>
 					{/if}
 				</div>
 				<div class="grid gap-2 md:grid-cols-3"><Input bind:value={registerName} placeholder="Display name (optional)" /><input list="knowledge-category-options" class="h-10 w-full rounded-md border border-input bg-background px-3 text-sm" bind:value={registerCategory} placeholder="Category — choose a basic or type your own" /><select class="rounded-md border bg-background p-2 text-sm" bind:value={registerGroupId}><option value="">Ungrouped</option>{#each groups as group}<option value={group.id}>{group.name}</option>{/each}</select></div>
@@ -568,7 +523,7 @@
 				<div class="grid gap-2 md:grid-cols-[minmax(0,1fr)_12rem]"><Input bind:value={registerTags} placeholder="Tags, comma separated" /><select class="rounded-md border bg-background p-2 text-sm" bind:value={registerVisibility}><option value="workspace">Workspace</option><option value="private">Private</option><option value="shared">Shared</option></select></div>
 				{#if registerVisibility === 'shared'}<div class="rounded-md border p-3"><p class="mb-2 text-xs text-muted-foreground">Share with workspace members</p><div class="flex flex-wrap gap-2">{#each data.members || [] as member}<label class="flex items-center gap-2 rounded border px-2 py-1 text-xs"><input type="checkbox" checked={registerSharedIds.includes(member.id)} onchange={() => (registerSharedIds = registerSharedIds.includes(member.id) ? registerSharedIds.filter((id) => id !== member.id) : [...registerSharedIds, member.id])} />{member.username} Â· {member.role}</label>{/each}</div></div>{/if}
 				<textarea class="min-h-20 w-full rounded-md border bg-background p-2 text-sm" bind:value={registerDescription} placeholder="Description / what this knowledge is for"></textarea>
-				<div class="flex justify-end"><Button onclick={registerKnowledge} disabled={busy || (registerKind === 'profile' ? !registerProfileId : !registerPath.trim())}><Plus class="size-4" />Register</Button></div>
+				<div class="flex justify-end"><Button onclick={registerKnowledge} disabled={busy || (registerKind === 'profile' ? !registerProfileId : !registerContent.trim())}><Plus class="size-4" />{registerKind === 'profile' ? 'Link profile' : 'Create knowledge'}</Button></div>
 			</CardContent></Card>
 		{/if}
 
