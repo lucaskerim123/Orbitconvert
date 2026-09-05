@@ -26,19 +26,19 @@ function validRedirect(value: string, applicationType: string) {
 export async function POST({ request }) {
 	const body = await request.json().catch(() => ({}));
 	const applicationType = body.application_type === 'native' ? 'native' : 'web';
-	const redirects = Array.isArray(body.redirect_uris) ? [...new Set(body.redirect_uris.map(String))] : [];
+	const redirects: string[] = Array.isArray(body.redirect_uris) ? [...new Set<string>(body.redirect_uris.map((v:unknown)=>String(v)))] : [];
 	if (!redirects.length || redirects.some((uri) => !validRedirect(uri, applicationType))) {
 		return json({ error: 'invalid_redirect_uri', error_description: 'A valid redirect_uris list is required.' }, { status: 400 });
 	}
 	if (body.token_endpoint_auth_method && body.token_endpoint_auth_method !== 'none') {
 		return json({ error: 'invalid_client_metadata', error_description: 'OrbitFS MCP DCR supports public clients with PKCE only.' }, { status: 400 });
 	}
-	const grantTypes = Array.isArray(body.grant_types) ? body.grant_types.map(String) : ['authorization_code', 'refresh_token'];
-	if (grantTypes.some((v) => !['authorization_code', 'refresh_token'].includes(v)) || !grantTypes.includes('authorization_code')) {
+	const grantTypes: string[] = Array.isArray(body.grant_types) ? body.grant_types.map((v:unknown)=>String(v)) : ['authorization_code', 'refresh_token'];
+	if (grantTypes.some((v:string) => !['authorization_code', 'refresh_token'].includes(v)) || !grantTypes.includes('authorization_code')) {
 		return json({ error: 'invalid_client_metadata', error_description: 'Only authorization_code and refresh_token grants are supported.' }, { status: 400 });
 	}
-	const responseTypes = Array.isArray(body.response_types) ? body.response_types.map(String) : ['code'];
-	if (responseTypes.some((v) => v !== 'code')) return json({ error: 'invalid_client_metadata', error_description: 'Only response_type code is supported.' }, { status: 400 });
+	const responseTypes: string[] = Array.isArray(body.response_types) ? body.response_types.map((v:unknown)=>String(v)) : ['code'];
+	if (responseTypes.some((v:string) => v !== 'code')) return json({ error: 'invalid_client_metadata', error_description: 'Only response_type code is supported.' }, { status: 400 });
 
 	const clientId = `orbitfs_${randomBytes(18).toString('base64url')}`;
 	const registrationAccessToken = randomToken(32);
