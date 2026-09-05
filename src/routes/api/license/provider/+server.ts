@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/auth';
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { getLicenseProviderSettings, setLicenseProviderBase } from '$lib/server/license';
+import { getLicenseProviderSettings, setLicenseProviderBase, getLicenseProviderDiagnostics } from '$lib/server/license';
 
 async function requireProviderAdmin(cookies: any) {
 	const supabase = getSupabaseAdmin();
@@ -13,7 +13,9 @@ async function requireProviderAdmin(cookies: any) {
 
 export async function GET() {
 	try {
-		return json(await getLicenseProviderSettings());
+		const settings = await getLicenseProviderSettings();
+		const diagnostics = await getLicenseProviderDiagnostics();
+		return json({ ...settings, diagnostics });
 	} catch (error: any) {
 		return json({ error: String(error?.message || 'Could not load licence API settings') }, { status: Number(error?.status || 500) });
 	}
