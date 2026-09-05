@@ -8,7 +8,9 @@ const PUBLIC_PATHS = new Set([
 	'/api/auth/logout',
 	'/api/auth/me',
 	'/api/license/status',
-	'/api/license/activate'
+	'/api/license/activate',
+	'/api/license/provider',
+	'/api/license/diagnostics'
 ]);
 
 const OAUTH_MACHINE_POSTS = new Set(['/oauth/token', '/oauth/register']);
