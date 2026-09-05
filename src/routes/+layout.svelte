@@ -60,7 +60,6 @@
 			.map((item) => ({ ...item, icon: iconFor(item.icon) }))
 	);
 	const primaryNav = $derived([
-		{ label: 'Files', href: '/', icon: Folder },
 		{ label: 'Library', href: '/library', icon: Library },
 		{ label: 'Studio', href: '/studio', icon: ScrollText },
 		{ label: 'Workspace Manager', href: '/workspaces', icon: Building2 },
@@ -83,10 +82,10 @@
 			icon: Settings,
 			items: [
 				{ label: 'Runtime & services', href: '/admin/config', icon: Settings },
-				{ label: 'Drive config', href: '/admin/config/drive', icon: HardDrive },
 				{ label: 'Add-on management', href: '/admin/addons', icon: Puzzle },
-				{ label: 'File permissions', href: '/admin/file-permissions', icon: FileLock },
-				{ label: 'Trash settings', href: '/admin/config/trash-settings', icon: Folder }
+				{ label: 'Knowledge settings', href: '/library/settings', icon: Library },
+				{ label: 'Studio settings', href: '/admin/studio/settings', icon: Settings },
+				{ label: 'Studio advanced', href: '/admin/studio/advanced', icon: Server }
 			]
 		},
 		{
@@ -274,8 +273,8 @@
 	const isRegisterRoute = $derived(page.url.pathname.startsWith('/register'));
 	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
 	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
-	const isFilesRoute = $derived(page.url.pathname === '/');
-	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/profiles') || page.url.pathname.startsWith('/studio')));
+	const isFilesRoute = $derived(false);
+	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/profiles') || page.url.pathname.startsWith('/studio') || page.url.pathname.startsWith('/sorter-converter')));
 
 	// Search is Files-scoped, but the box lives in the shared header - reset it whenever
 	// the user navigates away so it doesn't silently keep filtering a page it can't affect.
@@ -331,7 +330,7 @@
 			addons.load().then(() => {
 				if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
 			});
-			if (page.url.pathname === '/' || page.url.pathname.startsWith('/workspaces')) void workspace.load();
+			if (page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/studio') || page.url.pathname.startsWith('/sorter-converter')) void workspace.load();
 			void loadNotificationCount();
 			void redirectIfLicenceInvalid(true);
 		}
