@@ -3,7 +3,7 @@ import type { OrbitUser } from '$lib/server/auth';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 import { studioWorkspace,getStudioRuntimeSettings } from '$lib/server/studio-cloud';
 import { readLibrary,createLibraryChangeRequest } from '$lib/server/library';
-import { profileCatalog } from '$lib/server/workspace-profiles.js';
+import { profileCatalog,profileKnowledgeProjection } from '$lib/server/workspace-profiles.js';
 import { analyzeCloudRouting } from '$lib/server/routing-engine-cloud';
 
 const hash=(v:string)=>createHash('sha256').update(v).digest('hex');
@@ -52,7 +52,8 @@ async function collectSources(user:OrbitUser,workspaceId:string,input:any,settin
     const ids=new Set((selected.profileIds||[]).map(String));
     for(const p of catalog.profiles||[]){
       if(scope==='selection'&&!ids.has(String(p.id)))continue;
-      const content=(p.sections||[]).map((s:any)=>`## ${s.title||s.id}\n${s.content||''}`).join('\n\n').trim();
+      const full=await profileKnowledgeProjection(workspaceId,p.id,ws.permission||'viewer',user.id,user.role);
+      const content=(full.profile?.sections||[]).map((s:any)=>`## ${s.title||s.id}\n${s.content||''}`).join('\n\n').trim();
       if(!content)continue;
       out.push({sourceKey:`profile:${p.id}`,sourceType:'profile',provider:'base.profiles',profileId:p.id,title:p.name||'Profile',updatedAt:p.updatedAt||null,recordType:'profile-record',content,metadata:{profileId:p.id,type:p.type||p.classification||null}});
     }
