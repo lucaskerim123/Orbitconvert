@@ -2,6 +2,7 @@ import { json } from '@sveltejs/kit';
 import { requireAdmin } from '$lib/server/auth';
 import { assertPanelLicensed, getPanelLicenseSummary } from '$lib/server/license';
 import { getSupabaseAdmin } from '$lib/server/supabase';
+import { STORAGE_BUCKET } from '$lib/server/base-compat';
 
 export async function GET({ cookies, url }) {
 	try {
@@ -9,143 +10,104 @@ export async function GET({ cookies, url }) {
 		await assertPanelLicensed();
 
 		const supabase = getSupabaseAdmin();
-		const health = await supabase.from('orbitfs_workspaces').select('id', { count:'exact', head:true });
-		if (health.error) throw health.error;
-
-		const licence = await getPanelLicenseSummary();
 		const checkedAt = new Date().toISOString();
+		const [workspaceHealth, fileHealth, bucketHealth, licence] = await Promise.all([
+			supabase.from('orbitfs_workspaces').select('id', { count: 'exact', head: true }),
+			supabase.from('orbitfs_files').select('id', { count: 'exact', head: true }).is('deleted_at', null),
+			supabase.storage.getBucket(STORAGE_BUCKET),
+			getPanelLicenseSummary()
+		]);
+
+		if (workspaceHealth.error) throw workspaceHealth.error;
+		if (fileHealth.error) throw fileHealth.error;
+
+		const database = {
+			label: 'Supabase Database',
+			role: 'OrbitFS metadata, users, workspaces and library state',
+			status: 'Online',
+			state: 'running',
+			running: true,
+			reachable: true,
+			operational: true,
+			managedBy: 'Supabase',
+			workspaces: workspaceHealth.count ?? 0,
+			files: fileHealth.count ?? 0,
+			health: { ok: true, status: 200, message: 'Database query completed', checkedAt }
+		};
+
+		const storageOk = !bucketHealth.error && Boolean(bucketHealth.data);
+		const storage = {
+			label: 'Supabase Storage',
+			role: 'Binary and large-file backing store',
+			status: storageOk ? 'Online' : 'Degraded',
+			state: storageOk ? 'running' : 'degraded',
+			running: storageOk,
+			reachable: storageOk,
+			operational: storageOk,
+			managedBy: 'Supabase',
+			bucket: STORAGE_BUCKET,
+			health: {
+				ok: storageOk,
+				status: storageOk ? 200 : 503,
+				message: storageOk ? `Storage bucket ${STORAGE_BUCKET} is available` : String(bucketHealth.error?.message || 'Storage bucket is unavailable'),
+				checkedAt
+			}
+		};
 
 		const panel = {
-			label:'OrbitFS Panel',
-			role:'Vercel application',
-			status:'Online',
-			state:'running',
-			running:true,
-			reachable:true,
-			operational:true,
-			residentProcess:false,
-			service:'Vercel',
-			url:url.origin,
-			apiBase:'/api',
-			controls:[],
-			health:{ ok:true, status:200, message:'Vercel runtime reachable', checkedAt }
-		};
-
-		const studio = {
-			label:'Studio',
-			role:'Supabase-backed document engine',
-			status:'Standby',
-			state:'standby',
-			running:false,
-			reachable:true,
-			operational:true,
-			residentProcess:false,
-			service:'Vercel + Supabase',
-			controls:[],
-			detail:'Ready for request-driven Studio operations; no resident worker is running.'
-		};
-
-		const apex = {
-			label:'APEX',
-			role:'Library routing and approval engine',
-			status:'Standby',
-			state:'standby',
-			running:false,
-			reachable:true,
-			operational:true,
-			residentProcess:false,
-			service:'Vercel + Supabase',
-			controls:[],
-			detail:'Ready for Library scan, routing and approval operations; work runs only while handling a request.'
-		};
-
-		const mcp = {
-			label:'MCP Server',
-			role:'Cloud MCP add-on',
-			status:'Standby',
-			state:'standby',
-			running:false,
-			reachable:true,
-			operational:true,
-			residentProcess:false,
-			service:'Vercel',
-			controls:[],
-			licensed:true,
-			blocked:false,
-			future:false,
-			standby:true,
-			installed:true,
-			attached:true,
-			configured:true,
-			online:false,
-			available:true,
-			database:'Supabase',
-			detail:'Cloud MCP is request-driven. Standby means configured and ready, not a fake resident daemon.'
-		};
-
-		const converter = {
-			label:'Native Converter',
-			role:'Native conversion worker',
-			status:'Stopped',
-			state:'stopped',
-			running:false,
-			reachable:false,
-			operational:false,
-			residentProcess:false,
-			service:null,
-			controls:[],
-			available:false,
-			detail:'No native FFmpeg/ImageMagick/LibreOffice/Pandoc worker is attached to this Vercel deployment.'
+			label: 'OrbitFS Panel',
+			role: 'Main Vercel application and API',
+			status: 'Online',
+			state: 'running',
+			running: true,
+			reachable: true,
+			operational: true,
+			managedBy: 'Vercel',
+			url: url.origin,
+			apiBase: '/api',
+			health: { ok: true, status: 200, message: 'Panel request completed', checkedAt }
 		};
 
 		const edge = {
-			label:'Vercel Edge',
-			role:'Public HTTPS edge',
-			status:'Online',
-			state:'running',
-			running:true,
-			reachable:true,
-			operational:true,
-			residentProcess:false,
-			service:'Vercel Edge Network',
-			url:url.origin,
-			controls:[],
-			health:{ ok:true, status:200, message:'Managed by Vercel', checkedAt }
+			label: 'Vercel Edge',
+			role: 'Public HTTPS routing and deployment edge',
+			status: 'Online',
+			state: 'running',
+			running: true,
+			reachable: true,
+			operational: true,
+			managedBy: 'Vercel',
+			url: url.origin,
+			health: { ok: true, status: 200, message: 'Request reached the active Vercel deployment', checkedAt }
 		};
 
 		const licenceStatus = {
-			label:'Licence Authority',
-			role:'OrbitFS licensing',
-			status:licence.licensed ? 'Online' : 'Blocked',
-			state:licence.licensed ? 'running' : 'stopped',
-			running:Boolean(licence.licensed),
-			reachable:true,
-			operational:Boolean(licence.licensed),
-			residentProcess:false,
-			service:'license.incendiarynetworks.cc',
-			licensed:licence.licensed,
-			blocked:!licence.licensed,
-			controls:[]
+			label: 'Licence Authority',
+			role: 'OrbitFS installation and component entitlement',
+			status: licence.licensed ? 'Online' : 'Blocked',
+			state: licence.licensed ? 'running' : 'blocked',
+			running: Boolean(licence.licensed),
+			reachable: true,
+			operational: Boolean(licence.licensed),
+			managedBy: 'OrbitFS Licensing',
+			licensed: Boolean(licence.licensed),
+			blocked: !licence.licensed,
+			health: { ok: Boolean(licence.licensed), status: licence.licensed ? 200 : 403, message: licence.licensed ? 'Panel licence is valid' : 'Panel licence is not currently valid', checkedAt }
 		};
 
 		return json({
 			checkedAt,
-			mode:'serverless',
-			filesystem:false,
-			stateModel:['running','standby','stopped'],
+			mode: 'cloud',
+			filesystem: false,
+			storageModel: 'supabase-library',
 			panel,
-			studio,
-			apex,
-			mcp,
-			hive:mcp,
-			converter,
-			tunnel:edge,
+			database,
+			storage,
 			edge,
-			licence:licenceStatus,
-			disk:{ usedGB:null, freeGB:null, totalGB:null },
-			note:'standby means configured and ready for request-driven work. running is only reported for a real active runtime or worker; stopped means the capability is not attached or cannot operate.'
+			licence: licenceStatus,
+			note: 'This Vercel edition is library/storage-backed. It does not depend on Windows services, local drive paths, resident processes or a persistent VPS filesystem.'
 		});
-	} catch (error:any) {
-		return json({ error:String(error?.message || 'Failed to load system status') }, { status:Number(error?.status || 500) });
+	} catch (error: any) {
+		return json({ error: String(error?.message || 'Failed to load system status') }, { status: Number(error?.status || 500) });
 	}
 }
