@@ -3,7 +3,7 @@
 	import { addons } from '$lib/addons.svelte';
 	import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '$lib/components/ui';
 	import { Cloud, Copy, Database, KeyRound, Plug, RefreshCw } from '@lucide/svelte';
-	const mcpUrl='https://orbitfsmcp.vercel.app/mcp';
+	const mcpUrl='https://orbitconvert-mcp-addon.vercel.app/mcp';
 	let runtime=$state<any>(null),dcr=$state<any>(null),loading=$state(true),error=$state(''),copied=$state('');
 	async function load(){loading=true;error='';try{[runtime,dcr]=await Promise.all([api.get('/mcp/runtime'),api.get('/mcp/dcr-status')]);await addons.load();}catch(e){error=e instanceof ApiError?e.message:'Failed to load MCP cloud settings';}finally{loading=false;}}
 	async function copy(value:string,label:string){await navigator.clipboard.writeText(value);copied=label;setTimeout(()=>copied='',1600);}
@@ -25,7 +25,7 @@
 		<CardContent class="space-y-4 text-sm">
 			<div class="flex flex-wrap gap-2"><Badge variant={dcr?.enabled?'success':'destructive'}>{dcr?.enabled?'DCR enabled':'DCR disabled'}</Badge><Badge variant="outline">{dcr?.standard||'RFC 7591'}</Badge><Badge variant="outline">PKCE {dcr?.pkce||'S256'}</Badge><Badge variant="outline">{dcr?.registeredClients||0} registered</Badge></div>
 			<div class="grid gap-3 md:grid-cols-2">
-				<div class="rounded-md border p-3"><span class="text-xs text-muted-foreground">Registration endpoint</span><div class="mt-1 flex items-center gap-2"><code class="min-w-0 flex-1 overflow-x-auto">{dcr?.registrationEndpoint||'https://orbitfsproject.vercel.app/oauth/register'}</code><Button size="sm" variant="ghost" onclick={()=>copy(dcr?.registrationEndpoint||'https://orbitfsproject.vercel.app/oauth/register','dcr')}><Copy class="size-4"/></Button></div></div>
+				<div class="rounded-md border p-3"><span class="text-xs text-muted-foreground">Registration endpoint</span><div class="mt-1 flex items-center gap-2"><code class="min-w-0 flex-1 overflow-x-auto">{dcr?.registrationEndpoint||'https://orbitconvert.vercel.app/oauth/register'}</code><Button size="sm" variant="ghost" onclick={()=>copy(dcr?.registrationEndpoint||'https://orbitconvert.vercel.app/oauth/register','dcr')}><Copy class="size-4"/></Button></div></div>
 				<div class="rounded-md border p-3"><span class="text-xs text-muted-foreground">Authorization metadata</span><div class="mt-1 flex items-center gap-2"><code class="min-w-0 flex-1 overflow-x-auto">{dcr?.authorizationServerMetadata||'/.well-known/oauth-authorization-server'}</code></div></div>
 			</div>
 			<div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-4"><div class="rounded-md border p-3"><strong>Client type</strong><p class="text-xs text-muted-foreground">Web + native</p></div><div class="rounded-md border p-3"><strong>Client auth</strong><p class="text-xs text-muted-foreground">Public / none</p></div><div class="rounded-md border p-3"><strong>Grant</strong><p class="text-xs text-muted-foreground">Authorization code + refresh</p></div><div class="rounded-md border p-3"><strong>Management</strong><p class="text-xs text-muted-foreground">Registration access token</p></div></div>
