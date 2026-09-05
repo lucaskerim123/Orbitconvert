@@ -16,6 +16,84 @@ export async function studioWorkspace(user:OrbitUser,workspaceId:string,capabili
   return workspace;
 }
 
+
+export const STUDIO_SETTINGS_DEFAULTS:any={
+  provisionExisting:true,
+  maxJournalBytes:2097152,
+  maxDocumentBytes:5242880,
+  maxSessionBytes:2097152,
+  maxImportBytes:20971520,
+  maxExportBytes:52428800,
+  routingEnabled:true,
+  routingAutoAnalyzeCreate:true,
+  routingAutoAnalyzeUpdate:true,
+  routingUseApexSignals:true,
+  routingMinConfidence:.55,
+  routingProfileConfidence:.70,
+  routingIncidentConfidence:.62,
+  routingTimelineConfidence:.55,
+  routingMaxSuggestions:8,
+  routingMaxCharacters:50000,
+  semanticProvider:null,
+  semanticProviderStatus:'not_configured',
+  matcherType:'deterministic',
+  analysisPolicy:{
+    candidateFloor:.35,reviewThreshold:.52,conflictThreshold:.58,mergeThreshold:.78,updateThreshold:.72,addConfidence:.64,
+    detectConflicts:true,detectMerges:true,useStructureSignal:true,
+    weights:{content:1,title:.65,date:.35,type:.4,entities:.55,structure:.45},
+    maxCandidatesPerRecord:8,
+    limits:{maxSourcesPerRun:250,maxRecordsPerRun:5000,queueDepthLimit:20,stuckTaskMinutes:15},
+    providers:{enabledByDefault:true,apex:true,mcp:true,other:false,maxRecords:500,maxSources:1000}
+  }
+};
+function mergeStudioSettings(value:any={}){
+  const v=value&&typeof value==='object'?value:{};
+  return {...STUDIO_SETTINGS_DEFAULTS,...v,analysisPolicy:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy,...(v.analysisPolicy||{}),weights:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.weights,...(v.analysisPolicy?.weights||{})},limits:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.limits,...(v.analysisPolicy?.limits||{})},providers:{...STUDIO_SETTINGS_DEFAULTS.analysisPolicy.providers,...(v.analysisPolicy?.providers||{})}}};
+}
+export async function getStudioAdminSettings(user:OrbitUser){
+  if(!isSystemAdmin(user)) throw fail('System Owner or Admin required',403);
+  const db=getSupabaseAdmin();
+  const r=await db.from('studio_settings').select('settings_json,updated_at').eq('workspace_id','__global__').maybeSingle();
+  if(r.error) throw r.error;
+  const settings=mergeStudioSettings(r.data?.settings_json||{});
+  const docs=await db.from('studio_documents').select('content_text');
+  if(docs.error) throw docs.error;
+  const totalBytes=(docs.data||[]).reduce((n:any,row:any)=>n+Buffer.byteLength(String(row.content_text||''),'utf8'),0);
+  return {settings,storageUsage:{totalBytes,bytes:totalBytes,provider:'supabase',filesystem:false},engine:{state:'standby',service:{running:false},database:true,counts:{queued_jobs:0,running_jobs:0},residentProcess:false,mode:'serverless'},routing:{engine:'orbitfs-base-routing-v2-cloud',provider:'deterministic',semanticProvider:null,semanticProviderStatus:'not_configured'}};
+}
+export async function updateStudioAdminSettings(user:OrbitUser,input:any={}){
+  if(!isSystemAdmin(user)) throw fail('System Owner or Admin required',403);
+  const db=getSupabaseAdmin();
+  const current=(await getStudioAdminSettings(user)).settings;
+  const clamp=(value:any,min:number,max:number,fallback:number)=>Math.max(min,Math.min(max,Number(value??fallback)));
+  const next=mergeStudioSettings({
+    ...current,
+    provisionExisting:input.provisionExisting===undefined?current.provisionExisting:input.provisionExisting===true,
+    maxJournalBytes:clamp(input.maxJournalBytes,65536,20971520,current.maxJournalBytes),
+    maxDocumentBytes:clamp(input.maxDocumentBytes,65536,20971520,current.maxDocumentBytes),
+    maxSessionBytes:clamp(input.maxSessionBytes,65536,10485760,current.maxSessionBytes),
+    maxImportBytes:clamp(input.maxImportBytes,1048576,104857600,current.maxImportBytes),
+    maxExportBytes:clamp(input.maxExportBytes,1048576,104857600,current.maxExportBytes),
+    routingEnabled:input.routingEnabled===undefined?current.routingEnabled:input.routingEnabled!==false,
+    routingAutoAnalyzeCreate:input.routingAutoAnalyzeCreate===undefined?current.routingAutoAnalyzeCreate:input.routingAutoAnalyzeCreate!==false,
+    routingAutoAnalyzeUpdate:input.routingAutoAnalyzeUpdate===undefined?current.routingAutoAnalyzeUpdate:input.routingAutoAnalyzeUpdate!==false,
+    routingUseApexSignals:input.routingUseApexSignals===undefined?current.routingUseApexSignals:input.routingUseApexSignals!==false,
+    routingMinConfidence:clamp(input.routingMinConfidence,0,1,current.routingMinConfidence),
+    routingProfileConfidence:clamp(input.routingProfileConfidence,0,1,current.routingProfileConfidence),
+    routingIncidentConfidence:clamp(input.routingIncidentConfidence,0,1,current.routingIncidentConfidence),
+    routingTimelineConfidence:clamp(input.routingTimelineConfidence,0,1,current.routingTimelineConfidence),
+    routingMaxSuggestions:Math.round(clamp(input.routingMaxSuggestions,1,20,current.routingMaxSuggestions)),
+    routingMaxCharacters:Math.round(clamp(input.routingMaxCharacters,1000,200000,current.routingMaxCharacters)),
+    analysisPolicy:input.analysisPolicy&&typeof input.analysisPolicy==='object'?input.analysisPolicy:current.analysisPolicy
+  });
+  const r=await db.from('studio_settings').upsert({workspace_id:'__global__',settings_json:next,updated_by:user.username,updated_at:now()},{onConflict:'workspace_id'}).select('settings_json').single();
+  if(r.error) throw r.error;
+  return {settings:mergeStudioSettings(r.data.settings_json),storageUsage:(await getStudioAdminSettings(user)).storageUsage,compatibility:{sourceFormat:'md',panel:true,mcp:true,apex:true,filesystem:false}};
+}
+export function studioEngineState(){
+  return {state:'standby',service:{running:false},database:true,counts:{queued_jobs:0,running_jobs:0},residentProcess:false,mode:'serverless',detail:'Ready for request-driven work; no resident Studio daemon is running.'};
+}
+
 export function studioSchema(){return {
   entryTypes:['general','journal','note','profile-record','incident','timeline','evidence','reference'],
   categories:['general','personal','work','project','legal','mental-health','court','research','reference']
