@@ -3,7 +3,7 @@
 	import { api, ApiError } from '$lib/api';
 	import { addons as addonsStore } from '$lib/addons.svelte';
 	import { Badge, Button, Card, CardContent, CardDescription, CardHeader, CardTitle, Input } from '$lib/components/ui';
-	import { Cloud, LoaderCircle, Play, PlugZap, RefreshCw, RotateCcw, Settings, ShieldCheck, Square, Trash2 } from '@lucide/svelte';
+	import { Cloud, LoaderCircle, PlugZap, RefreshCw, Settings, ShieldCheck, Trash2 } from '@lucide/svelte';
 
 	type Addon = {
 		id:string; name:string; description:string; version:string;
@@ -36,12 +36,6 @@
 		catch(e){ error=message(e,`${action} failed`); }
 		finally { busy=''; }
 	}
-	async function controlMcp(action:'start'|'stop'|'restart'){
-		busy=`mcp:${action}`; error='';
-		try { await api.post('/mcp/master-control',{action}); await load(); }
-		catch(e){ error=message(e,`Unable to ${action} MCP`); }
-		finally { busy=''; }
-	}
 	async function saveConfig(id:string){
 		busy=`${id}:config`; error='';
 		try { await api.patch(`/addons/${id}/config`,{deploymentUrl:deploymentUrls[id]||''}); await load(); }
@@ -70,13 +64,13 @@
 		<div class="grid gap-4">
 		{#each addons as addon (addon.id)}
 			<Card>
-				<CardHeader><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><CardTitle>{addon.name}</CardTitle><Badge variant="outline">v{addon.version}</Badge><Badge variant={tone(addon)}>{addon.status}</Badge>{#if addon.id==='mcp'}<Badge variant={mcpStatus?.online?'success':'destructive'}>{mcpStatus?.online?'Online':'Offline'}</Badge>{/if}</div><CardDescription class="mt-1">{addon.description}</CardDescription></div><Badge variant={addon.licensed?'success':'destructive'}>{addon.licensed?'Licensed':'Licence required'}</Badge></div></CardHeader>
+				<CardHeader><div class="flex flex-wrap items-start justify-between gap-3"><div><div class="flex flex-wrap items-center gap-2"><CardTitle>{addon.name}</CardTitle><Badge variant="outline">v{addon.version}</Badge><Badge variant={tone(addon)}>{addon.status}</Badge>{#if addon.id==='mcp'}<Badge variant={mcpStatus?.state==='standby'?'warning':mcpStatus?.state==='running'?'success':'destructive'}>{mcpStatus?.state || 'stopped'}</Badge>{/if}</div><CardDescription class="mt-1">{addon.description}</CardDescription></div><Badge variant={addon.licensed?'success':'destructive'}>{addon.licensed?'Licensed':'Licence required'}</Badge></div></CardHeader>
 				<CardContent class="space-y-4">
 					<div class="grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4"><div class="rounded-lg border p-3"><span class="text-xs text-muted-foreground">Runtime</span><p class="mt-1 font-medium">Vercel</p></div><div class="rounded-lg border p-3"><span class="text-xs text-muted-foreground">Storage / DB</span><p class="mt-1 font-medium">Supabase</p></div><div class="rounded-lg border p-3"><span class="text-xs text-muted-foreground">Installed</span><p class="mt-1 font-medium">{addon.installed?'Yes':'No'}</p></div><div class="rounded-lg border p-3"><span class="text-xs text-muted-foreground">Attached</span><p class="mt-1 font-medium">{addon.attached?'Yes':'No'}</p></div></div>
 					{#if addon.id === 'mcp'}
 						<div class="rounded-lg border bg-muted/10 p-3 text-sm">
-							<div class="flex flex-wrap items-center justify-between gap-2"><div><span class="text-xs text-muted-foreground">Backend service</span><p class="mt-1 font-medium">{mcpStatus?.publicBaseUrl || addon.deploymentUrl || 'https://orbitfsmcp.vercel.app'}</p></div><Badge variant={mcpStatus?.serviceStatus==='online'?'success':'warning'}>{mcpStatus?.serviceStatus || 'Unknown'}</Badge></div>
-							<p class="mt-2 text-xs text-muted-foreground">MCP is a separate backend-only Vercel deployment. OrbitFS Project owns the admin UI, runtime controls and OAuth login.</p>
+							<div class="flex flex-wrap items-center justify-between gap-2"><div><span class="text-xs text-muted-foreground">Backend service</span><p class="mt-1 font-medium">{mcpStatus?.publicBaseUrl || addon.deploymentUrl || 'https://orbitfsmcp.vercel.app'}</p></div><Badge variant={mcpStatus?.state==='standby'?'warning':mcpStatus?.state==='running'?'success':'destructive'}>{mcpStatus?.state || mcpStatus?.serviceStatus || 'stopped'}</Badge></div>
+							<p class="mt-2 text-xs text-muted-foreground">MCP is a separate backend-only Vercel deployment. OrbitFS Project owns the admin UI, OAuth login and configuration. Standby is the normal ready state between requests.</p>
 						</div>
 					{:else}
 						<label class="block space-y-1 text-sm"><span>Cloud deployment URL</span><Input bind:value={deploymentUrls[addon.id]} placeholder="https://your-addon.vercel.app" disabled={!addon.installed}/><span class="block text-xs text-muted-foreground">Only public cloud deployments are supported.</span></label>
@@ -85,7 +79,7 @@
 						{#if !addon.installed}<Button onclick={()=>act(addon.id,'install')} disabled={busy!==''}>Install</Button>{/if}
 						{#if addon.installed && addon.id !== 'mcp'}<Button variant="outline" onclick={()=>saveConfig(addon.id)} disabled={busy!==''}>Save config</Button>{/if}
 						{#if addon.installed}<Button variant="outline" onclick={()=>act(addon.id,'test')} disabled={busy!==''}><ShieldCheck class="size-4"/>Test</Button>{/if}
-						{#if addon.id==='mcp' && addon.installed && addon.attached}<Button onclick={()=>controlMcp('start')} disabled={busy!==''||mcpStatus?.serviceStatus==='online'}><Play class="size-4"/>Start</Button><Button variant="destructive" onclick={()=>controlMcp('stop')} disabled={busy!==''||mcpStatus?.serviceStatus==='stopped'}><Square class="size-4"/>Stop</Button><Button variant="outline" onclick={()=>controlMcp('restart')} disabled={busy!==''}><RotateCcw class="size-4"/>Restart</Button><Button variant="outline" onclick={()=>goto('/admin/mcp/runtime')}><Cloud class="size-4"/>Master Control</Button><Button variant="outline" onclick={()=>goto('/admin/mcp/settings')}><Settings class="size-4"/>Settings</Button>{/if}
+						{#if addon.id==='mcp' && addon.installed && addon.attached}<Button variant="outline" onclick={()=>goto('/admin/mcp/runtime')}><Cloud class="size-4"/>Master Control</Button><Button variant="outline" onclick={()=>goto('/admin/mcp/settings')}><Settings class="size-4"/>Settings</Button>{/if}
 						{#if addon.installed && !addon.attached}<Button onclick={()=>act(addon.id,'attach')} disabled={busy!=='' || !addon.licensed || !addon.configured}><PlugZap class="size-4"/>Attach</Button>{/if}
 						{#if addon.attached}<Button variant="outline" onclick={()=>act(addon.id,'detach')} disabled={busy!==''}>Detach</Button>{/if}
 						{#if addon.installed}<Button variant="ghost" class="text-destructive" onclick={()=>remove(addon.id)} disabled={busy!=='' || addon.attached}><Trash2 class="size-4"/>Uninstall</Button>{/if}
