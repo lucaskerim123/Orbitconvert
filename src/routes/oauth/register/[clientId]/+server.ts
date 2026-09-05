@@ -75,7 +75,7 @@ export async function PUT({ request, params }) {
 	if (body.scope !== undefined) patch.scope = normalizeScope(String(body.scope || ''));
 	if (body.redirect_uris !== undefined) {
 		if (!Array.isArray(body.redirect_uris)) return json({error:'invalid_redirect_uri',error_description:'redirect_uris must be an array'},{status:400});
-		const redirects=[...new Set(body.redirect_uris.map(String))];
+		const redirects: string[]=[...new Set<string>(body.redirect_uris.map((v:unknown)=>String(v)))];
 		if (!redirects.length || redirects.some((uri)=>!validRedirect(uri,applicationType))) return json({error:'invalid_redirect_uri',error_description:'A valid redirect_uris list is required'},{status:400});
 		patch.redirect_uris=redirects;
 	}
