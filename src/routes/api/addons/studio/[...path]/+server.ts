@@ -7,6 +7,7 @@ import {
   studioRevisions, studioSchema, studioShares, updateStudioDocument
 } from '$lib/server/studio-cloud';
 import { createLibraryChangeRequest, listLibraryChangeRequests } from '$lib/server/library';
+import { listCloudAnalysisRuns,startCloudAnalysis,getCloudAnalysisRun,createCloudAnalysisProposals } from '$lib/server/studio-analysis-cloud';
 
 const clean=(v:any)=>String(v??'').trim();
 const fail=(e:any)=>json({error:String(e?.message||'Studio request failed'),code:String(e?.code||'STUDIO_ERROR')},{status:Number(e?.status||500)});
@@ -19,6 +20,8 @@ export async function GET({params,url,cookies}:any){try{
   if(r.area==='schema')return json(studioSchema());
   if(r.area==='profiles')return json(await studioProfiles(user,r.workspaceId));
   if(r.area==='people')return json(await studioPeople(user,r.workspaceId));
+  if(r.area==='analysis'&&!r.id)return json(await listCloudAnalysisRuns(user,r.workspaceId,Number(url.searchParams.get('limit')||50)));
+  if(r.area==='analysis'&&r.id&&!r.operation)return json({analysis:await getCloudAnalysisRun(user,r.workspaceId,r.id,url.searchParams.get('records')==='1')});
   if(r.area==='documents'&&!r.id)return json(await listStudioDocuments(user,r.workspaceId,url.searchParams));
   if(r.area==='documents'&&r.id&&!r.operation)return json(await getStudioDocument(user,r.workspaceId,r.id));
   if(r.area==='documents'&&r.id&&r.operation==='revisions')return json(await studioRevisions(user,r.workspaceId,r.id));
@@ -28,6 +31,9 @@ export async function GET({params,url,cookies}:any){try{
 }catch(e){return fail(e);}}
 export async function POST({params,request,cookies}:any){try{
   const user=await ctx(cookies),r=route(params),input=await body(request);
+  if(r.area==='analysis'&&!r.id)return json({analysis:await startCloudAnalysis(user,r.workspaceId,input)});
+  if(r.area==='analysis'&&r.id&&r.operation==='proposals')return json({proposals:await createCloudAnalysisProposals(user,r.workspaceId,r.id,input)});
+  if(r.area==='analysis'&&r.id&&r.operation==='cancel')return json({error:'Cloud analysis runs execute synchronously and cannot be cancelled after the request completes.',analysis:await getCloudAnalysisRun(user,r.workspaceId,r.id,false)},{status:409});
   if(r.area==='documents'&&!r.id)return json(await createStudioDocument(user,r.workspaceId,input));
   if(r.area==='documents'&&r.id&&['finalize','archive','draft'].includes(r.operation))return json(await setStudioLifecycle(user,r.workspaceId,r.id,r.operation as any));
   if(r.area==='documents'&&r.id&&r.operation==='restore-revision')return json(await restoreStudioRevision(user,r.workspaceId,r.id,Number(input.revisionNo)));
