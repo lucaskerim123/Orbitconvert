@@ -116,6 +116,42 @@ async function saveRow(patch: Record<string, unknown>) {
 	if (result.error) throw result.error;
 }
 
+export async function getLicenseProviderDiagnostics() {
+	const environmentBase = environmentProviderBase();
+	let row: LicenseRow | null = null;
+	let database = { ok: false, error: null as string | null };
+	try {
+		row = await getRow();
+		database = { ok: true, error: null };
+	} catch (error: any) {
+		database = { ok: false, error: String(error?.message || error || 'Database unavailable') };
+	}
+	const providerBase = row ? providerBaseFromRow(row) : environmentBase;
+	const path = validatePath();
+	let provider = { ok: false, status: null as number | null, revision: null as string | null, error: null as string | null };
+	try {
+		const response = await fetch(`${providerBase}/api/license/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const payload = await response.json().catch(() => ({}));
+		provider = {
+			ok: response.ok,
+			status: response.status,
+			revision: payload?.revision ? String(payload.revision) : null,
+			error: response.ok ? null : String(payload?.error || payload?.message || `HTTP ${response.status}`)
+		};
+	} catch (error: any) {
+		provider = { ok: false, status: null, revision: null, error: String(error?.message || error || 'Provider unreachable') };
+	}
+	return {
+		providerBase,
+		validatePath: path,
+		validateUrl: `${providerBase}${path}`,
+		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
+		database,
+		provider,
+		configSource: row && typeof (row.metadata as any)?.providerBase === 'string' ? 'saved' : (String(env.ORBITFS_LICENSE_API_URL || env.ORBITFS_LICENSE_URL || '').trim() ? 'environment' : 'default')
+	};
+}
+
 export async function getLicenseProviderSettings() {
 	const row = await getRow();
 	return { providerBase: providerBaseFromRow(row), allowedProviderBases: [...ALLOWED_LICENSE_API_BASES] };
