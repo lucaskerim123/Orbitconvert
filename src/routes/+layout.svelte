@@ -211,7 +211,7 @@
 				reason?: string;
 				components?: Record<string, { allowed?: boolean; reason?: string | null }>;
 			}>(`/license/status${refresh ? '?refresh=1' : ''}`);
-			const panel = summary.components?.orbitfs_panel;
+			const panel = summary.components?.orbitfs_base;
 			if (summary.enforcement !== false && panel?.allowed !== true) {
 				goto(
 					`/admin/license?reason=${encodeURIComponent(panel?.reason ?? summary.reason ?? 'panel_invalid')}`
@@ -271,7 +271,7 @@
 	const isLoginRoute = $derived(page.url.pathname === '/login');
 	const isSetupRoute = $derived(page.url.pathname.startsWith('/setup'));
 	const isRegisterRoute = $derived(page.url.pathname.startsWith('/register'));
-	const isLicenseRoute = $derived(page.url.pathname === '/license' || page.url.pathname.startsWith('/admin/license'));
+	const isLicenseRoute = $derived(page.url.pathname === '/license');
 	const isPublicRoute = $derived(isLoginRoute || isSetupRoute || isRegisterRoute || isLicenseRoute);
 	const isFilesRoute = $derived(false);
 	const showWorkspaceSelector = $derived(workspace.enabled && (page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/profiles') || page.url.pathname.startsWith('/studio') || page.url.pathname.startsWith('/sorter-converter')));
