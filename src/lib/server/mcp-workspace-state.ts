@@ -84,7 +84,7 @@ export async function getContextBundle(workspaceId: string, bundleId: string) {
 	const depIds=(deps.data??[]).map((d:any)=>d.depends_on_bundle_id);
 	const depNames=depIds.length?(await db.from('mcp_context_bundles').select('id,name').in('id',depIds)).data??[]:[];
 	return { ...bundle,
-		entries:(entries.data ?? []).map((e:any)=>({ type:e.entry_type,path:e.item_path,attachmentType:e.attachment_type,profileId:e.profile_id,profileName:e.profile_name,recursive:e.recursive_flag,required:e.required_flag,priority:e.priority })),
+		entries:(entries.data ?? []).map((e:any)=>({ type:e.entry_type,path:e.item_path,attachmentType:e.attachment_type,profileId:e.profile_id,profileName:e.profile_name,knowledgeItemId:e.knowledge_item_id,knowledgeItemName:e.knowledge_item_name,loadMode:e.load_mode,recursive:e.recursive_flag,required:e.required_flag,priority:e.priority })),
 		dependencies:(deps.data ?? []).map((d:any)=>({ bundleId:d.depends_on_bundle_id,name:depNames.find((n:any)=>n.id===d.depends_on_bundle_id)?.name,required:d.required_flag !== false }))
 	};
 }
@@ -96,7 +96,14 @@ export async function saveContextBundle(workspaceId:string,user:OrbitUser,body:a
 	if(id){ const r=await db.from('mcp_context_bundles').update({...payload,version:(Number(body.version)||1)+1}).eq('workspace_id',workspaceId).eq('id',id).select('id').single(); if(r.error)throw r.error; }
 	else { const r=await db.from('mcp_context_bundles').insert({...payload,created_by_user_id:user.id}).select('id').single(); if(r.error)throw r.error; id=r.data.id; }
 	await Promise.all([db.from('mcp_context_bundle_entries').delete().eq('bundle_id',id!),db.from('mcp_context_bundle_dependencies').delete().eq('bundle_id',id!)]);
-	const entries=(body.entries||[]).map((e:any,i:number)=>({bundle_id:id,entry_type:e.type||'file',item_path:String(e.path||'').replace(/^\/+|\/+$/g,''),attachment_type:e.attachmentType||'path',profile_id:e.profileId||null,profile_name:e.profileName||null,recursive_flag:Boolean(e.recursive),required_flag:e.required!==false,priority:Number(e.priority||100),sort_order:i}));
+	const entries=(body.entries||[]).map((e:any,i:number)=>{
+		const attachmentType=e.attachmentType==='knowledge'?'knowledge':e.attachmentType==='profile'?'profile':'path';
+		const knowledgeItemId=String(e.knowledgeItemId||'').trim(),profileId=String(e.profileId||'').trim(),path=String(e.path||'').replace(/^\/+|\/+$/g,'');
+		if(attachmentType==='knowledge'&&!knowledgeItemId) throw Object.assign(new Error('Library bundle entries require a Knowledge Item ID'),{status:400,code:'CCS_KNOWLEDGE_ID_REQUIRED'});
+		if(attachmentType==='profile'&&!profileId) throw Object.assign(new Error('Profile bundle entries require a Profile ID'),{status:400,code:'CCS_PROFILE_ID_REQUIRED'});
+		if(attachmentType==='path'&&!path) throw Object.assign(new Error('Legacy path entries require a path'),{status:400,code:'CCS_PATH_REQUIRED'});
+		return {bundle_id:id,entry_type:attachmentType==='knowledge'?'knowledge':(e.type||'file'),item_path:path,attachment_type:attachmentType,profile_id:attachmentType==='profile'?profileId:null,profile_name:attachmentType==='profile'?(e.profileName||null):null,knowledge_item_id:attachmentType==='knowledge'?knowledgeItemId:null,knowledge_item_name:attachmentType==='knowledge'?(e.knowledgeItemName||null):null,load_mode:attachmentType==='knowledge'&&['smart','full','summary'].includes(String(e.loadMode||''))?String(e.loadMode):attachmentType==='knowledge'?'smart':null,recursive_flag:attachmentType==='path'?Boolean(e.recursive):false,required_flag:e.required!==false,priority:Number(e.priority||100),sort_order:i};
+	});
 	const deps=(body.dependencies||[]).filter((d:any)=>d.bundleId&&d.bundleId!==id).map((d:any,i:number)=>({bundle_id:id,depends_on_bundle_id:d.bundleId,required_flag:d.required!==false,sort_order:i}));
 	if(entries.length){const r=await db.from('mcp_context_bundle_entries').insert(entries);if(r.error)throw r.error;}
 	if(deps.length){const r=await db.from('mcp_context_bundle_dependencies').insert(deps);if(r.error)throw r.error;}
