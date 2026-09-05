@@ -9,7 +9,7 @@ const DEFAULT_VALIDATE_PATH = '/validate';
 export const ALLOWED_LICENSE_API_BASES = [
 	'https://orbitfs.vercel.app/api/license/v1'
 ] as const;
-const ALLOWED_ENTITLEMENT_ISSUERS = new Set(['license.incendiarynetworks.cc', 'orbitfs.vercel.app']);
+const ALLOWED_ENTITLEMENT_ISSUERS = new Set(['orbitfs-website', 'orbitfs.vercel.app', 'license.incendiarynetworks.cc']);
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAqAHPTGUEd1LkTFxngD5o
 CiN+YbFIei69WO3PnR7OMYdtxIBShPq3PK+80zFRvhpQzpBtc+CsIQY0WPLmnC9t
@@ -64,7 +64,21 @@ const nowIso = () => new Date().toISOString();
 const refreshMs = () => Math.max(60_000, Number(env.ORBITFS_LICENSE_REFRESH_MINUTES || 180) * 60_000);
 const signalMs = () => Math.max(60_000, Number(env.ORBITFS_LICENSE_SIGNAL_MINUTES || 1) * 60_000);
 const keyHint = (value: string) => value.length > 4 ? `****${value.slice(-4)}` : '****';
-const entitlementPublicKey = () => String(env.ORBITFS_ENTITLEMENT_PUBLIC_KEY || '').replace(/\\n/g, '\n').trim() || PUBLIC_KEY;
+let cachedProviderPublicKey = '';
+async function entitlementPublicKey(providerBase: string) {
+	const configured = String(env.ORBITFS_ENTITLEMENT_PUBLIC_KEY || '').replace(/\\n/g, '\n').trim();
+	if (configured) return configured;
+	if (cachedProviderPublicKey) return cachedProviderPublicKey;
+	try {
+		const response = await fetch(`${providerBase}/public-key`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const key = (await response.text()).trim();
+		if (response.ok && key.includes('BEGIN PUBLIC KEY')) {
+			cachedProviderPublicKey = key;
+			return key;
+		}
+	} catch { /* fall back below */ }
+	return PUBLIC_KEY;
+}
 
 function normalizeApprovedProviderBase(value: string) {
 	try {
@@ -166,13 +180,13 @@ export async function ensureInstallationIdentity() {
 	return installationId;
 }
 
-function verifyEntitlement(token: string, installationId: string, allowGrace = false): EntitlementPayload {
+async function verifyEntitlement(token: string, installationId: string, providerBase: string, allowGrace = false): Promise<EntitlementPayload> {
 	const parts = String(token || '').split('.');
 	if (parts.length !== 3) throw Object.assign(new Error('Invalid signed entitlement'), { code: 'LICENSE_SIGNATURE_INVALID' });
 	const [headerPart, payloadPart, signaturePart] = parts;
 	const header = JSON.parse(Buffer.from(headerPart, 'base64url').toString('utf8'));
 	if (header.alg !== 'RS256') throw Object.assign(new Error('Unsupported entitlement algorithm'), { code: 'LICENSE_SIGNATURE_INVALID' });
-	const verified = verify('RSA-SHA256', Buffer.from(`${headerPart}.${payloadPart}`), entitlementPublicKey(), Buffer.from(signaturePart, 'base64url'));
+	const verified = verify('RSA-SHA256', Buffer.from(`${headerPart}.${payloadPart}`), await entitlementPublicKey(providerBase), Buffer.from(signaturePart, 'base64url'));
 	if (!verified) throw Object.assign(new Error('Entitlement signature check failed'), { code: 'LICENSE_SIGNATURE_INVALID' });
 	const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8')) as EntitlementPayload;
 	const now = Math.floor(Date.now() / 1000);
@@ -244,7 +258,7 @@ async function callProvider(licenseKey: string, installationId: string, activate
 	const body = await response.json().catch(() => ({}));
 	if (!response.ok) throw Object.assign(new Error(body.error || body.message || `Licence API returned ${response.status}`), { code: body.code || 'LICENSE_PROVIDER_ERROR', status: response.status < 500 ? response.status : 503 });
 	if (!body.entitlement) throw Object.assign(new Error('Licence API returned no signed entitlement'), { code: 'LICENSE_UNSIGNED_RESPONSE', status: 503 });
-	return { payload: verifyEntitlement(body.entitlement, installationId, false), entitlement: String(body.entitlement) };
+	return { payload: await verifyEntitlement(body.entitlement, installationId, providerBase, false), entitlement: String(body.entitlement) };
 }
 
 async function persistEntitlement(licenseKey: string, payload: EntitlementPayload, entitlement: string, source: string) {
@@ -268,8 +282,16 @@ async function revisionChanged(row: LicenseRow) {
 	const metadata = { ...(row.metadata || {}) } as Record<string, any>;
 	const lastSignalAt = typeof metadata.lastSignalAt === 'string' ? Date.parse(metadata.lastSignalAt) : 0;
 	if (lastSignalAt && Date.now() - lastSignalAt < signalMs()) return false;
-	await saveRow({ metadata: { ...metadata, lastSignalAt: nowIso() } });
-	return false;
+	try {
+		const response = await fetch(`${providerBaseFromRow(row)}/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		if (!response.ok) return false;
+		const payload = await response.json().catch(() => ({}));
+		const revision = payload?.revision ?? payload;
+		const revisionValue = typeof revision === 'string' || typeof revision === 'number' ? String(revision) : null;
+		const changed = Boolean(metadata.lastRevision && revisionValue && metadata.lastRevision !== revisionValue);
+		await saveRow({ metadata: { ...metadata, lastSignalAt: nowIso(), lastRevision: revisionValue || metadata.lastRevision || null } });
+		return changed;
+	} catch { return false; }
 }
 
 export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}): Promise<PanelLicenseSummary> {
@@ -282,7 +304,7 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 	const lastCheckedAt = typeof metadata.lastCheckedAt === 'string' ? Date.parse(metadata.lastCheckedAt) : 0;
 	if (!options.refresh && cachedToken && lastCheckedAt && Date.now() - lastCheckedAt < refreshMs()) {
 		try {
-			const cached = verifyEntitlement(cachedToken, installationId, false);
+			const cached = await verifyEntitlement(cachedToken, installationId, providerBaseFromRow(row), false);
 			if (!(await revisionChanged(row!))) return summaryFromPayload(cached, await getRow());
 			row = await getRow();
 		} catch { /* refresh below */ }
@@ -293,7 +315,7 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 	} catch (error: any) {
 		if (cachedToken) {
 			try {
-				const cached = verifyEntitlement(cachedToken, installationId, true);
+				const cached = await verifyEntitlement(cachedToken, installationId, providerBaseFromRow(row), true);
 				return summaryFromPayload(cached, row, { offlineGrace: true, refreshError: String(error?.message || error) });
 			} catch { /* fail closed below */ }
 		}
