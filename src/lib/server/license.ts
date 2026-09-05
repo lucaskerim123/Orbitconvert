@@ -6,9 +6,15 @@ export const PANEL_COMPONENT = 'orbitfs_panel';
 const LICENSE_ID = 'primary';
 const DEFAULT_PROVIDER = 'https://orbitfs.vercel.app/api/license/v1';
 const DEFAULT_VALIDATE_PATH = '/validate';
-export const ALLOWED_LICENSE_API_BASES = [
-	'https://orbitfs.vercel.app/api/license/v1'
+export const LICENSE_SYSTEMS = [
+	{
+		id: 'orbitfs_official_v1',
+		name: 'OrbitFS Official Licensing',
+		description: 'Official OrbitFS customer licensing service',
+		providerBase: 'https://orbitfs.vercel.app/api/license/v1'
+	}
 ] as const;
+export const ALLOWED_LICENSE_API_BASES = LICENSE_SYSTEMS.map((system) => system.providerBase) as readonly string[];
 const ALLOWED_ENTITLEMENT_ISSUERS = new Set(['orbitfs-website', 'orbitfs.vercel.app', 'license.incendiarynetworks.cc']);
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAqAHPTGUEd1LkTFxngD5o
@@ -123,7 +129,7 @@ async function saveRow(patch: Record<string, unknown>) {
 	if (result.error) throw result.error;
 }
 
-export async function getLicenseProviderDiagnostics() {
+export async function getLicenseProviderDiagnostics(providerOverride?: string) {
 	const environmentBase = environmentProviderBase();
 	let row: LicenseRow | null = null;
 	let database = { ok: false, error: null as string | null };
@@ -133,7 +139,7 @@ export async function getLicenseProviderDiagnostics() {
 	} catch (error: any) {
 		database = { ok: false, error: String(error?.message || error || 'Database unavailable') };
 	}
-	const providerBase = row ? providerBaseFromRow(row) : environmentBase;
+	const providerBase = providerOverride ? normalizeApprovedProviderBase(providerOverride) : (row ? providerBaseFromRow(row) : environmentBase);
 	let provider = { ok: false, status: null as number | null, revision: null as string | null, error: null as string | null };
 	try {
 		const response = await fetch(`${providerBase}${DEFAULT_VALIDATE_PATH}`, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
@@ -152,6 +158,7 @@ export async function getLicenseProviderDiagnostics() {
 		validatePath: DEFAULT_VALIDATE_PATH,
 		validateUrl: `${providerBase}${DEFAULT_VALIDATE_PATH}`,
 		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
+		licenseSystems: LICENSE_SYSTEMS.map((system) => ({ ...system })),
 		database,
 		provider,
 		configSource: row && typeof (row.metadata as any)?.providerBase === 'string' ? 'saved' : (String(env.ORBITFS_LICENSE_API_URL || env.ORBITFS_LICENSE_URL || '').trim() ? 'environment' : 'default')
@@ -160,7 +167,11 @@ export async function getLicenseProviderDiagnostics() {
 
 export async function getLicenseProviderSettings() {
 	const row = await getRow();
-	return { providerBase: providerBaseFromRow(row), allowedProviderBases: [...ALLOWED_LICENSE_API_BASES] };
+	return {
+		providerBase: providerBaseFromRow(row),
+		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
+		licenseSystems: LICENSE_SYSTEMS.map((system) => ({ ...system }))
+	};
 }
 
 export async function setLicenseProviderBase(value: string) {
@@ -168,7 +179,11 @@ export async function setLicenseProviderBase(value: string) {
 	const row = await getRow();
 	const metadata = { ...(row?.metadata || {}) } as Record<string, any>;
 	await saveRow({ metadata: { ...metadata, providerBase, providerChangedAt: nowIso() } });
-	return { providerBase, allowedProviderBases: [...ALLOWED_LICENSE_API_BASES] };
+	return {
+		providerBase,
+		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
+		licenseSystems: LICENSE_SYSTEMS.map((system) => ({ ...system }))
+	};
 }
 
 export async function ensureInstallationIdentity() {
