@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { OrbitUser } from '$lib/server/auth';
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { studioWorkspace,getStudioAdminSettings } from '$lib/server/studio-cloud';
+import { studioWorkspace,getStudioRuntimeSettings } from '$lib/server/studio-cloud';
 import { readLibrary,createLibraryChangeRequest } from '$lib/server/library';
 import { profileCatalog } from '$lib/server/workspace-profiles.js';
 import { analyzeCloudRouting } from '$lib/server/routing-engine-cloud';
@@ -79,8 +79,8 @@ export async function listCloudAnalysisRuns(user:OrbitUser,workspaceId:string,li
 
 export async function startCloudAnalysis(user:OrbitUser,workspaceId:string,input:any={}){
   await studioWorkspace(user,workspaceId,'studio_analyse');const db=getSupabaseAdmin();
-  const adminSettings=await getStudioAdminSettings(user).catch(()=>({settings:{analysisPolicy:{limits:{maxSourcesPerRun:250,maxRecordsPerRun:5000}},analysisMaxItems:250,analysisMaxCharacters:1500000}} as any));
-  const settings=adminSettings.settings||{},scope=clean(input.scope||'workspace')||'workspace';
+  const settings=await getStudioRuntimeSettings();
+  const scope=clean(input.scope||'workspace')||'workspace';
   const created=await db.from('studio_analysis_runs').insert({workspace_id:workspaceId,scope_type:scope,scope_json:input.selection||{},status:'running',phase:'inventory',progress:5,created_by_user_id:user.id,created_by:user.username,started_at:now(),provider_json:{base:'deterministic',apex:input.useProviders!==false,mcp:input.useProviders!==false}}).select('*').single();
   if(created.error)throw created.error;const run=created.data;
   try{
