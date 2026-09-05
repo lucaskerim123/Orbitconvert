@@ -4,7 +4,7 @@
 	import ProfileManager from '$lib/components/library/profile-manager.svelte';
 	import ContextLibraryPanel from '$lib/components/mcp/context-library-panel.svelte';
 	import { Button, Card, CardContent, CardHeader, CardTitle, Input } from '$lib/components/ui';
-	import { Archive, Boxes, ContactRound, File as FileIcon, LibraryBig, Link2, LoaderCircle, Network, Plus, RefreshCw, Save, Search, Settings2, Trash2 } from '@lucide/svelte';
+	import { Archive, Boxes, ContactRound, File as FileIcon, Folder, LibraryBig, Link2, LoaderCircle, Network, Plus, RefreshCw, Save, Search, Settings2, Trash2 } from '@lucide/svelte';
 
 	type Tab = 'knowledge' | 'approvals' | 'records' | 'ccs' | 'profiles' | 'timeline' | 'sections' | 'retrieve' | 'intelligence' | 'lineage' | 'links' | 'usage';
 	type ProfileSection = { id:string; title?:string; kind?:string; content?:string };
