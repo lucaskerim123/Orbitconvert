@@ -151,7 +151,7 @@
 			<div>
 				<div class="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-3 py-1 text-xs text-primary"><ShieldCheck class="size-3.5" /> Licence required</div>
 				<h1 class="mt-4 text-2xl font-semibold tracking-tight">OrbitFS Base System</h1>
-				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">This deployment runs when the Incendiary Networks licence service validates the <code>orbitfs_panel</code> entitlement for this installation.</p>
+				<p class="mt-2 max-w-xl text-sm leading-6 text-muted-foreground">This deployment runs when the OrbitFS master licence system validates the <code>orbitfs_base</code> entitlement for this installation.</p>
 			</div>
 			<button class="inline-flex h-10 items-center gap-2 rounded-md border px-3 text-sm hover:bg-muted disabled:opacity-50" onclick={() => load(true)} disabled={refreshing}><RefreshCw class={`size-4 ${refreshing ? 'animate-spin' : ''}`} /> Refresh</button>
 		</div>
@@ -161,7 +161,7 @@
 		{:else}
 			<div class="mt-6 grid gap-3 sm:grid-cols-2">
 				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Status</p><p class="mt-1 font-medium">{summary?.licensed ? 'Licensed' : 'Blocked'}</p></div>
-				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Component</p><p class="mt-1 font-medium">orbitfs_panel</p></div>
+				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Component</p><p class="mt-1 font-medium">orbitfs_base</p></div>
 				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Installation</p><p class="mt-1 break-all font-mono text-xs">{summary?.installationId || 'pending'}</p></div>
 				<div class="rounded-xl border bg-background/60 p-4"><p class="text-xs uppercase tracking-wide text-muted-foreground">Key</p><p class="mt-1 font-mono text-sm">{summary?.keyHint || 'not activated'}</p></div>
 			</div>
