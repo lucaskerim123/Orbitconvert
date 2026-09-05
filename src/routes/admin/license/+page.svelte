@@ -17,7 +17,7 @@
 	type ProviderSettings = { providerBase: string; allowedProviderBases: string[] };
 
 	const COMPONENT_META: Record<string, { label: string; icon: typeof HardDrive }> = {
-		orbitfs_panel: { label: 'Base System', icon: HardDrive },
+		orbitfs_base: { label: 'Base System', icon: HardDrive },
 		orbitfs_mcp: { label: 'MCP', icon: Server },
 		orbitfs_sorter: { label: 'Apex System', icon: Sparkles }
 	};
@@ -130,7 +130,7 @@
 		<Card>
 			<CardHeader>
 				<CardTitle class="flex items-center gap-2"><ShieldCheck class="size-4 text-muted-foreground" />Licence API</CardTitle>
-				<CardDescription>Choose the approved Incendiary Networks licence endpoint used by this OrbitFS deployment. Custom hosts are rejected server-side.</CardDescription>
+				<CardDescription>Choose the approved OrbitFS licence system used by this deployment. Custom hosts are rejected server-side.</CardDescription>
 			</CardHeader>
 			<CardContent class="space-y-3">
 				{#if provider}
@@ -148,7 +148,7 @@
 		</Card>
 
 		<Card>
-			<CardHeader><CardTitle>Activate / replace key</CardTitle><CardDescription>Enter a licence key to activate or update the panel's entitlement.</CardDescription></CardHeader>
+			<CardHeader><CardTitle>Activate / replace key</CardTitle><CardDescription>Enter a licence key to activate or replace the OrbitFS Base entitlement.</CardDescription></CardHeader>
 			<CardContent>
 				<form class="flex flex-col gap-2 sm:flex-row" onsubmit={activate}><Input bind:value={keyInput} placeholder="Licence key" class="flex-1" /><Button type="submit" disabled={activating}>{#if activating}<LoaderCircle class="size-4 animate-spin" />{/if}Activate</Button></form>
 				{#if activateError}<p class="mt-2 text-sm text-destructive">{activateError}</p>{/if}
