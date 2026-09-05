@@ -61,7 +61,6 @@
 	);
 	const primaryNav = $derived([
 		{ label: 'Library', href: '/library', icon: Library },
-		{ label: 'Studio', href: '/studio', icon: ScrollText },
 		{ label: 'Workspace Manager', href: '/workspaces', icon: Building2 },
 		...addonPrimaryNav
 	]);
@@ -83,9 +82,7 @@
 			items: [
 				{ label: 'Runtime & services', href: '/admin/config', icon: Settings },
 				{ label: 'Add-on management', href: '/admin/addons', icon: Puzzle },
-				{ label: 'Knowledge settings', href: '/library/settings', icon: Library },
-				{ label: 'Studio settings', href: '/admin/studio/settings', icon: Settings },
-				{ label: 'Studio advanced', href: '/admin/studio/advanced', icon: Server }
+				{ label: 'Knowledge settings', href: '/library/settings', icon: Library }
 			]
 		},
 		{
@@ -98,6 +95,16 @@
 		}
 
 	];
+	const studioGroup = {
+		label: 'Studio',
+		icon: ScrollText,
+		items: [
+			{ label: 'Entries', href: '/studio', icon: ScrollText },
+			{ label: 'Analysis', href: '/studio/analysis', icon: Sparkles },
+			{ label: 'Settings', href: '/admin/studio/settings', icon: Settings, roles: ['owner', 'admin'] },
+			{ label: 'Advanced', href: '/admin/studio/advanced', icon: Server, roles: ['owner', 'admin'] }
+		]
+	};
 	const pluginNavigationGroups = $derived(
 		addons.navigationGroups().map((group) => ({ ...group, icon: iconFor(group.icon), items: group.items.map((item) => ({ ...item, icon: iconFor(item.icon) })) }))
 	);
@@ -120,7 +127,7 @@
 		const apexGroups = allPluginGroups.filter((group) => group.label === 'Apex System');
 		const mcpGroups = allPluginGroups.filter((group) => group.label === 'MCP' || group.label === 'MCP Admin');
 		const otherPluginGroups = allPluginGroups.filter((group) => !['Apex System', 'MCP', 'MCP Admin'].includes(group.label));
-		return mergeAdminGroups(apexGroups, mcpGroups, coreAdminGroups, otherPluginGroups);
+		return mergeAdminGroups([studioGroup], apexGroups, mcpGroups, coreAdminGroups, otherPluginGroups);
 	})());
 
 	let mobileNavOpen = $state(false);
