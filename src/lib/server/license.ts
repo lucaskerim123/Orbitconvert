@@ -3,6 +3,7 @@ import { env } from '$env/dynamic/private';
 import { getSupabaseAdmin } from '$lib/server/supabase';
 
 export const PANEL_COMPONENT = 'orbitfs_base';
+export const STABLE_LICENSE_COMPONENTS = ['orbitfs_base','orbitfs_mcp','orbitfs_apex','orbitfs_studio'] as const;
 const LICENSE_ID = 'primary';
 const DEFAULT_PROVIDER = 'https://orbitfs.vercel.app/api/license/v1';
 const DEFAULT_VALIDATE_PATH = '/validate';
@@ -258,7 +259,7 @@ function unlicensedSummary(installationId: string, row: LicenseRow | null, reaso
 	};
 }
 
-async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [PANEL_COMPONENT]) {
+async function callProvider(licenseKey: string, installationId: string, activate: boolean, components: string[] = [...STABLE_LICENSE_COMPONENTS]) {
 	if (!licenseKey) throw Object.assign(new Error('Licence key is required'), { code: 'LICENSE_KEY_REQUIRED', status: 400 });
 	const row = await getRow();
 	const providerBase = providerBaseFromRow(row);
@@ -337,7 +338,7 @@ export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}
 		} catch { /* refresh below */ }
 	}
 	try {
-		const result = await callProvider(licenseKey, installationId, false);
+		const result = await callProvider(licenseKey, installationId, false, [...STABLE_LICENSE_COMPONENTS]);
 		return await persistEntitlement(licenseKey, result.payload, result.entitlement, 'refresh');
 	} catch (error: any) {
 		if (cachedToken) {
