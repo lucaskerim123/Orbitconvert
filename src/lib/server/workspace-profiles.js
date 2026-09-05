@@ -103,7 +103,7 @@ export async function saveProfileState(workspaceRoot, state) {
 }
 
 function sectionTemplate(id, title, kind = 'text', content = '', patch = {}) {
-  return { id, title, kind, content, canRead: true, loadIntoMcp: true, detailLevel: 'summary', generated: true, locked: true, sourcePath: '', ...patch };
+  return { id, title, kind, content, canRead: true, loadIntoMcp: true, detailLevel: 'summary', generated: true, locked: true, ...patch };
 }
 
 
@@ -135,7 +135,7 @@ export function blankProfileTemplate() {
   return {
     version: 2,
     template: 'master_profile_section_base',
-    profile: { name: '', type: 'person-master', status: 'active', classification: 'personal-record', restricted: false, srestricted: false, sourcePath: null, fields: {}, sections: baseProfileSections(), editorIds: [], viewerIds: [] }
+    profile: { name: '', type: 'person-master', status: 'active', classification: 'personal-record', restricted: false, srestricted: false, fields: {}, sections: baseProfileSections(), editorIds: [], viewerIds: [] }
   };
 }
 
@@ -288,7 +288,7 @@ function formatLabelsFromImport(raw, text = '') {
 
 function timelineRows(text = '') {
   return String(text || '').split('\n').map((line) => stripMarkdown(line)).filter(Boolean).map((line) => {
-    const m = line.match(/^(.{3,45}?)(?:\s+[-â€“â€”]\s+|\s{2,})(.+)$/);
+    const m = line.match(/^(.{3,45}?)(?:\s+[-??]\s+|\s{2,})(.+)$/);
     return m ? { date: m[1].trim(), title: m[2].trim(), linkedFile: '', notes: '' } : null;
   }).filter(Boolean);
 }
@@ -362,7 +362,6 @@ function normalizeImportedProfile(raw, actor) {
     srestricted: srestrictedValue === true || /yes|true/i.test(String(srestrictedValue || '')),
     fields: raw.fields && typeof raw.fields === 'object' && !Array.isArray(raw.fields) ? raw.fields : {},
     sections: mergeBaseSections(sections),
-    sourcePath: clean(raw.sourcePath || raw.source_file || raw.sourceFile, 500) || null,
     editorIds: Array.isArray(raw.editorIds) ? raw.editorIds : [],
     viewerIds: Array.isArray(raw.viewerIds) ? raw.viewerIds : [],
     createdBy: actor, createdAt: now(), updatedBy: actor, updatedAt: now(), version: 1
@@ -637,7 +636,7 @@ export async function updateProfile(workspaceRoot, profileId, input, actor, role
   const assigned = profile.editorIds?.includes(userId);
   if (!(permissions.edit || (permissions.edit_assigned && assigned))) throw Object.assign(new Error('Profile edit permission required'), { status: 403 });
   if (profile.restricted && !permissions.edit_restricted) throw Object.assign(new Error('Restricted profile edit permission required'), { status: 403 });
-  for (const key of ['name','type','status','classification','sourcePath']) if (input[key] !== undefined) profile[key] = clean(input[key], key === 'sourcePath' ? 500 : 120);
+  for (const key of ['name','type','status','classification']) if (input[key] !== undefined) profile[key] = clean(input[key], 120);
   for (const key of ['fields','editorIds','viewerIds']) if (input[key] !== undefined) profile[key] = input[key];
   if (input.sections !== undefined) profile.sections = protectLabelUpdates(profile, input.sections, permissions);
   if (input.restricted !== undefined) profile.restricted = Boolean(input.restricted);
@@ -734,7 +733,7 @@ export async function resolveProfileEditRequest(workspaceRoot, requestId, input,
     if (profile.restricted && !permissions.edit_restricted) throw Object.assign(new Error('Restricted profile approval requires edit restricted permission'), { status: 403 });
     const patch = request.patch || {};
     applied.beforeVersion = Number(profile.version || 0);
-    for (const key of ['name','type','status','classification','sourcePath']) if (patch[key] !== undefined) { profile[key] = clean(patch[key], key === 'sourcePath' ? 500 : 120); applied.changed.push(key); }
+    for (const key of ['name','type','status','classification']) if (patch[key] !== undefined) { profile[key] = clean(patch[key], 120); applied.changed.push(key); }
     for (const key of ['fields','editorIds','viewerIds']) if (patch[key] !== undefined) { profile[key] = patch[key]; applied.changed.push(key); }
     if (patch.sections !== undefined) { profile.sections = protectLabelUpdates(profile, patch.sections, permissions); applied.changed.push('sections'); }
     if (patch.restricted !== undefined) { profile.restricted = Boolean(patch.restricted); applied.changed.push('restricted'); }
@@ -932,7 +931,7 @@ function sectionMarkdown(section) {
   }
   if (section?.kind === 'timeline') {
     const entries = Array.isArray(section.entries) ? section.entries : [];
-    return entries.map((entry) => `- ${entry.date || 'No date'} â€” ${entry.title || 'Untitled'}${entry.linkedFile ? ` â€” ${entry.linkedFile}` : ''}${entry.notes ? ` â€” ${entry.notes}` : ''}`).join('\n') || '_No timeline entries yet_';
+    return entries.map((entry) => `- ${entry.date || 'No date'} ? ${entry.title || 'Untitled'}${entry.linkedFile ? ` ? ${entry.linkedFile}` : ''}${entry.notes ? ` ? ${entry.notes}` : ''}`).join('\n') || '_No timeline entries yet_';
   }
   return String(section?.content ?? '').trim() || '_No content_';
 }
@@ -959,10 +958,8 @@ export function profileMarkdown(profile) {
     if (section?.removed === true || section?.enabled === false || section?.canRead === false || section?.loadIntoMcp === false) continue;
     const title = clean(section?.title || section?.name || 'Section', 160);
     const content = sectionMarkdown(section);
-    const source = String(section?.sourcePath ?? '').trim();
     if (!title && !content) continue;
     lines.push('', `## ${title || 'Section'}`);
-    if (source) lines.push('', `Source: ${source}`);
     if (section?.detailLevel === 'summary' && section?.kind !== 'relationships' && section?.kind !== 'timeline') lines.push('', content.split(/\n+/).find((line) => line.trim()) || content || '_No content_');
     else lines.push('', content || '_No content_');
   }

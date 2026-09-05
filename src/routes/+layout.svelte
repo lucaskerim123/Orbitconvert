@@ -150,7 +150,7 @@
 	let mcpAccessWorkspaces = $state<Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }>>([]);
 	let workspaceMode = $state(false);
 	let apexAccessMode = $state<'admins_only' | 'workspace_owners' | 'workspace_permissions'>('workspace_owners');
-	let apexAccessWorkspaces = $state<Array<{ permission?: string; management_permissions?: Record<string, boolean> }>>([]);
+	let workspaceAccessWorkspaces = $state<Array<{ permission?: string; management_permissions?: Record<string, boolean> }>>([]);
 	let bootstrappedToken = $state<string | null>(null);
 
 	async function loadWorkspaceAddonAccess() {
@@ -158,11 +158,11 @@
 			const data = await api.get<{ settings?: { workspaceModeEnabled?: boolean; apexAccessMode?: 'admins_only' | 'workspace_owners' | 'workspace_permissions' }; workspaces: Array<{ permission?: string; management_permissions?: Record<string, boolean> }> }>('/workspaces');
 			workspaceMode = true;
 			apexAccessMode = data.settings?.apexAccessMode ?? 'workspace_owners';
-			apexAccessWorkspaces = data.workspaces ?? [];
+			workspaceAccessWorkspaces = data.workspaces ?? [];
 		} catch {
 			workspaceMode = true;
 			apexAccessMode = 'workspace_owners';
-			apexAccessWorkspaces = [];
+			workspaceAccessWorkspaces = [];
 		}
 		try {
 			const access = await api.get<{ mcpWorkspaces?: Array<{ mcpAllowed?: boolean; management_permissions?: Record<string, boolean> }> }>('/mcp/access');
@@ -248,14 +248,14 @@
 		}
 		if (group.label === 'Apex System') {
 			if (apexAccessMode === 'admins_only') return false;
-			if (!item.permission) return apexAccessWorkspaces.some((workspace) => workspace.permission === 'owner');
+			if (!item.permission) return workspaceAccessWorkspaces.some((workspace) => workspace.permission === 'owner');
 			if (apexAccessMode === 'workspace_owners') {
-				return apexAccessWorkspaces.some((workspace) => workspace.permission === 'owner' && workspace.management_permissions?.[item.permission!] === true);
+				return workspaceAccessWorkspaces.some((workspace) => workspace.permission === 'owner' && workspace.management_permissions?.[item.permission!] === true);
 			}
-			return apexAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
+			return workspaceAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
 		}
-		if (item.permission) return apexAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
-		return apexAccessWorkspaces.length > 0;
+		if (item.permission) return workspaceAccessWorkspaces.some((workspace) => workspace.management_permissions?.[item.permission!] === true);
+		return workspaceAccessWorkspaces.length > 0;
 	}
 
 	function canAccessGroup(group: { label: string; roles?: string[]; items: Array<{ permission?: string; roles?: string[] }> }) {
@@ -318,7 +318,7 @@
 		bootstrappedToken = token;
 
 		addons.load().then(() => {
-			if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+			void loadWorkspaceAddonAccess();
 		});
 		workspace.load();
 		loadNotificationCount();
@@ -335,7 +335,7 @@
 		function resync() {
 			if (!auth.isAuthenticated) return;
 			addons.load().then(() => {
-				if (addons.addons.some((addon) => addon.id === 'apex' || addon.id === 'sorter')) void loadWorkspaceAddonAccess();
+				void loadWorkspaceAddonAccess();
 			});
 			if (page.url.pathname.startsWith('/workspaces') || page.url.pathname.startsWith('/library') || page.url.pathname.startsWith('/studio') || page.url.pathname.startsWith('/sorter-converter')) void workspace.load();
 			void loadNotificationCount();

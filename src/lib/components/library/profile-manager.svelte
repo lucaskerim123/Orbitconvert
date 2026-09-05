@@ -49,7 +49,6 @@
 		canRead?: boolean;
 		loadIntoMcp?: boolean;
 		detailLevel?: string;
-		sourcePath?: string;
 		relationships?: Relationship[];
 		entries?: TimelineEntry[];
 		labels?: { primary?: string[]; context?: string[]; system?: string[]; sensitive?: string[] };
@@ -213,7 +212,6 @@
 			detailLevel: 'summary',
 			generated: true,
 			locked: false,
-			sourcePath: '',
 			...patch
 		};
 	}
@@ -619,7 +617,7 @@
 				status: 'active',
 				classification: 'personal-record',
 				restricted: false,
-				fields: { source_file: filename },
+				fields: { import_source_name: filename },
 				sections: mergeBaseSections(sections)
 			}
 		};
@@ -1841,18 +1839,7 @@
 									></select
 								>
 							</div>
-							<label class="mt-2 block text-xs"
-								>Linked source file / note
-								<input
-									class="mt-1 w-full rounded-md border bg-background p-2"
-									value={section.sourcePath ?? ''}
-									placeholder="Optional source path"
-									oninput={(event) =>
-										updateSection(index, {
-											sourcePath: (event.currentTarget as HTMLInputElement).value
-										})}
-								/>
-							</label>
+
 							</div>
 						</article>
 						{/if}

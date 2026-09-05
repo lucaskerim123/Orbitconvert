@@ -75,14 +75,14 @@ async function collectSources(user:OrbitUser,workspaceId:string,input:any,settin
 export async function listCloudAnalysisRuns(user:OrbitUser,workspaceId:string,limit=50){
   await studioWorkspace(user,workspaceId,'studio_view');const db=getSupabaseAdmin();
   const r=await db.from('studio_analysis_runs').select('*').eq('workspace_id',workspaceId).order('created_at',{ascending:false}).limit(Math.min(200,Math.max(1,limit)));if(r.error)throw r.error;
-  return {items:r.data||[],engine:{state:'standby',mode:'serverless',residentProcess:false,operational:true}};
+  return {items:r.data||[],processing:{state:'ready',mode:'serverless',residentProcess:false,operational:true}};
 }
 
 export async function startCloudAnalysis(user:OrbitUser,workspaceId:string,input:any={}){
   await studioWorkspace(user,workspaceId,'studio_analyse');const db=getSupabaseAdmin();
   const settings=await getStudioRuntimeSettings();
   const scope=clean(input.scope||'workspace')||'workspace';
-  const created=await db.from('studio_analysis_runs').insert({workspace_id:workspaceId,scope_type:scope,scope_json:input.selection||{},status:'running',phase:'inventory',progress:5,created_by_user_id:user.id,created_by:user.username,started_at:now(),provider_json:{base:'deterministic',apex:input.useProviders!==false,mcp:input.useProviders!==false}}).select('*').single();
+  const created=await db.from('studio_analysis_runs').insert({workspace_id:workspaceId,scope_type:scope,scope_json:input.selection||{},status:'running',phase:'inventory',progress:5,created_by_user_id:user.id,created_by:user.username,started_at:now(),provider_json:{base:'deterministic',library:true,profiles:true,studio:true,knowledgeArchitecture:true}}).select('*').single();
   if(created.error)throw created.error;const run=created.data;
   try{
     const sources=await collectSources(user,workspaceId,input,settings);
@@ -95,7 +95,7 @@ export async function startCloudAnalysis(user:OrbitUser,workspaceId:string,input
       const analysis=await analyzeCloudRouting(user,workspaceId,{id:source.sourceRef||source.itemId||source.profileId,title:source.title,content,date:source.date,type:source.recordType,profileTargetId:source.profileId,metadata:source.metadata||{}},{minConfidence:settings.routingMinConfidence,profileConfidence:settings.routingProfileConfidence,incidentConfidence:settings.routingIncidentConfidence,timelineConfidence:settings.routingTimelineConfidence,maxSuggestions:settings.routingMaxSuggestions,maxCharacters:settings.routingMaxCharacters});
       const suggestions=analysis.suggestions||[];
       if(!suggestions.length){
-        const ins=await db.from('studio_analysis_findings').insert({run_id:run.id,record_id:rr.data.id,finding_type:'no_change',confidence:1,explanation:'No actionable routing or knowledge change was detected.',score_json:{engine:analysis.engine},status:'candidate'});if(ins.error)throw ins.error;findings++;continue;
+        const ins=await db.from('studio_analysis_findings').insert({run_id:run.id,record_id:rr.data.id,finding_type:'no_change',confidence:1,explanation:'No actionable routing or knowledge change was detected.',score_json:{processor:analysis.processor},status:'candidate'});if(ins.error)throw ins.error;findings++;continue;
       }
       for(const s of suggestions){
         const review=reviewPayload(source,s);
@@ -115,7 +115,7 @@ export async function getCloudAnalysisRun(user:OrbitUser,workspaceId:string,id:s
   const run=await db.from('studio_analysis_runs').select('*').eq('workspace_id',workspaceId).eq('id',id).maybeSingle();if(run.error)throw run.error;if(!run.data)throw fail('Analysis run not found',404);
   const f=await db.from('studio_analysis_findings').select('*').eq('run_id',id).order('created_at');if(f.error)throw f.error;
   let records:any[]=[];if(includeRecords){const r=await db.from('studio_analysis_records').select('*').eq('run_id',id).order('created_at');if(r.error)throw r.error;records=r.data||[];}
-  return {run:run.data,findings:f.data||[],records,engine:{state:'standby',mode:'serverless',residentProcess:false,operational:true}};
+  return {run:run.data,findings:f.data||[],records,processing:{state:'ready',mode:'serverless',residentProcess:false,operational:true}};
 }
 
 export async function createCloudAnalysisProposals(user:OrbitUser,workspaceId:string,runId:string,input:any={}){
@@ -127,7 +127,7 @@ export async function createCloudAnalysisProposals(user:OrbitUser,workspaceId:st
     let operation:any=null;
     if(s.kind==='profile_record_add')operation={type:'profile_record_add',profileId:s.profileId||null,sectionId:s.sectionId||'records',title:source.title||'Studio analysis finding',content:source.content||'',date:source.date||null,category:'analysis'};
     else if(s.kind==='library_item_update'&&s.itemId)operation={type:'library_item_update',itemId:s.itemId,fields:{content:source.content||''}};
-    else if(s.kind==='knowledge_record_add')operation={type:'knowledge_record_add',role:s.role||'general_record_target',itemId:s.existing?.itemId||null,title:source.title||'Studio analysis finding',content:source.content||'',date:source.date||null,category:'analysis'};
+    else if(s.kind==='knowledge_record_add')operation={type:'knowledge_record_add',role:s.role||'general_record_target',itemId:s.itemId||s.existing?.itemId||null,title:source.title||'Studio analysis finding',content:source.content||'',date:source.date||null,category:'analysis'};
     if(!operation)continue;
     const request=await createLibraryChangeRequest(user,workspaceId,{source:{system:'studio_analysis',runId,findingId:f.id,title:source.title||f.explanation},sourceSnapshot:{runId,findingId:f.id,review},summary:`Studio analysis: ${source.title||f.explanation||'finding'}`,reason:f.explanation||'',operations:[operation]});
     proposals.push(request);

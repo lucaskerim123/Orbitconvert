@@ -4,7 +4,7 @@ import { assertPanelLicensed } from '$lib/server/license';
 import {
 	createCollection, createEvent, createLibraryItem, createLink, deleteCollection, deleteEvent,
 	deleteLibraryItem, deleteLink, exportLibrary, importLibrary, indexLibraryItem, presentLibrary,
-	readLibrary, registerScannedFiles, retrieveLibrary, saveLibrary, saveUsage, deleteUsage, scanLibraryFiles,
+	readLibrary, retrieveLibrary, saveLibrary, saveUsage, deleteUsage,
 	updateCollection, updateEvent, updateLibraryItem, createLibraryChangeRequest, listLibraryChangeRequests, assignLibraryChangeRequestTargets, resolveLibraryChangeRequest, createLibraryGroup, updateLibraryGroup, deleteLibraryGroup, resolveLibraryRoleTargets, libraryHealth, editLibraryChangeRequestOperation, createAppliedChangeRevision, getLibrarySettings, updateLibrarySettings
 } from '$lib/server/library';
 
@@ -44,7 +44,7 @@ export async function POST({params,request,cookies}:any){
 		if(r.area==='links'&&!r.id)return json(await createLink(user,r.workspaceId,input));
 		if(r.area==='events'&&!r.id)return json(await createEvent(user,r.workspaceId,input));
 		if(r.area==='usage'&&!r.id)return json(await saveUsage(user,r.workspaceId,input));
-		if(r.area==='index-all'){const s=await readLibrary(r.workspaceId);const results:any[]=[];for(const item of s.items){if(item.source?.provider==='base.files')try{results.push(await indexLibraryItem(user,r.workspaceId,item.id));}catch{}}return json({indexed:results.length,results});}
+		if(r.area==='index-all'){const state=await readLibrary(r.workspaceId);const results:any[]=[];const failures:any[]=[];for(const item of state.items){if(['library.native','memory.knowledge'].includes(item.source?.provider))try{results.push(await indexLibraryItem(user,r.workspaceId,item.id));}catch(error:any){failures.push({itemId:item.id,error:String(error?.message||error)});}}return json({indexed:results.length,failed:failures.length,results,failures});}
 		if(r.area==='items'&&r.id&&r.operation==='lineage'){const s=await readLibrary(r.workspaceId);const item=s.items.find((x:any)=>x.id===r.id);if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});item.lineage=input;await saveLibrary(r.workspaceId,s);return json({item,lineage:item.lineage});}
 		throw Object.assign(new Error('Library route not found'),{status:404});}catch(error){return fail(error);}}
 export async function PATCH({params,request,cookies}:any){

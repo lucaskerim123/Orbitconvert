@@ -1,12 +1,12 @@
 // @ts-nocheck
 import crypto from 'node:crypto';
 import { getSupabaseAdmin } from '$lib/server/supabase';
-import { findEntry, permissionsForPath, readEntryBytes, writeFileBytes, normalizePath } from '$lib/server/base-compat';
 import { getWorkspace, managementPermissions, requireWorkspaceAccess, workspaceMembers, workspaceRole } from '$lib/server/workspaces';
 import { profileCatalog, profileKnowledgeProjection, updateProfile } from '$lib/server/workspace-profiles.js';
 import { buildKnowledgeIntelligence, buildFactRelations, factRelationLinks, retrievalIntelligenceBoost } from '$lib/server/knowledge-intelligence.js';
 import { buildStructuredRecords } from '$lib/server/knowledge-structure.js';
 import type { OrbitUser } from '$lib/server/auth';
+import { getKnowledgeArchitecture, resolveKnowledgeItemPolicy } from '$lib/server/knowledge-architecture';
 
 const now = () => new Date().toISOString();
 const uid = (prefix:string) => `${prefix}_${crypto.randomUUID()}`;
@@ -16,9 +16,9 @@ const list = (value:any) => [...new Set((Array.isArray(value)?value:String(value
 export const LIBRARY_SETTINGS_DEFAULTS = Object.freeze({
   freshnessMs:30000,
   maxFreshRefresh:100,
-  scanMaxFiles:1000,
-  scanRegisterBatch:100,
-  scanIndexByDefault:true,
+  ingestMaxItems:1000,
+  ingestBatch:100,
+  autoIndexKnowledge:true,
   retrievalLimit:12,
   retrievalMaxChars:12000,
   analysisMaxItems:250,
@@ -34,18 +34,18 @@ export const LIBRARY_SAFEGUARDS = Object.freeze({
 });
 
 export const LIBRARY_ROLES = [
-  {id:'core_file',label:'Core File',sourceKinds:['file','folder'],loadMode:'full'},
+  {id:'core_knowledge',label:'Core Knowledge',sourceKinds:['knowledge'],loadMode:'full'},
   {id:'core_profile',label:'Core Profile',sourceKinds:['profile'],loadMode:'full'},
-  {id:'incident_log',label:'Incident Log',sourceKinds:['file','folder','profile']},
-  {id:'timeline',label:'Timeline',sourceKinds:['file','folder','profile']},
-  {id:'relationship_timeline',label:'Relationship Timeline',sourceKinds:['file','folder','profile']},
-  {id:'knowledge_target',label:'Knowledge Target',sourceKinds:['file','folder','profile']},
-  {id:'reference_target',label:'Reference Target',sourceKinds:['file','folder','profile']},
-  {id:'evidence_target',label:'Evidence Store',sourceKinds:['file','folder','profile']},
+  {id:'incident_log',label:'Event / Incident Log',sourceKinds:['knowledge']},
+  {id:'timeline',label:'Timeline',sourceKinds:['knowledge']},
+  {id:'relationship_timeline',label:'Secondary Timeline',sourceKinds:['knowledge']},
+  {id:'knowledge_target',label:'Knowledge Target',sourceKinds:['knowledge']},
+  {id:'reference_target',label:'Reference Target',sourceKinds:['knowledge']},
+  {id:'evidence_target',label:'Source Material Target',sourceKinds:['knowledge']},
   {id:'profile_record_target',label:'Profile Record Target',sourceKinds:['profile']},
-  {id:'general_record_target',label:'General Record Target',sourceKinds:['file','folder','profile']}
+  {id:'general_record_target',label:'General Record Target',sourceKinds:['knowledge']}
 ] as const;
-export const LIBRARY_LIFECYCLES = ['unclassified','current','final_locked','old','draft','archived','reference_only','deprecated'] as const;
+export const LIBRARY_LIFECYCLES = ['unclassified','current','final','final_locked','old','draft','archived','reference_only','deprecated'] as const;
 const roleIds=new Set(LIBRARY_ROLES.map(x=>x.id));
 const lifecycleIds=new Set<string>(LIBRARY_LIFECYCLES as readonly string[]);
 const roles=(value:any)=>list(value).map((x:any)=>String(x).toLowerCase().replace(/[^a-z0-9_-]+/g,'_')).filter((x:any)=>roleIds.has(x));
@@ -53,6 +53,7 @@ const lifecycle=(value:any)=>lifecycleIds.has(String(value||'').toLowerCase())?S
 export const LIBRARY_LIFECYCLE_DEFINITIONS = [
   {id:'unclassified',label:'Unclassified',writable:true,description:'Not classified yet.'},
   {id:'current',label:'Current',writable:true,description:'Current authoritative knowledge.'},
+  {id:'final',label:'Final',writable:false,description:'Final authoritative knowledge retained without further direct writes.'},
   {id:'final_locked',label:'Final / locked',writable:false,description:'Final reference content; changes require a new revision or target.'},
   {id:'old',label:'Old',writable:false,description:'Older retained material.'},
   {id:'draft',label:'Draft',writable:true,description:'Work in progress.'},
@@ -62,15 +63,20 @@ export const LIBRARY_LIFECYCLE_DEFINITIONS = [
 ] as const;
 
 function blank(workspaceId:string) {
-	return { version:8, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], settings:{...LIBRARY_SETTINGS_DEFAULTS}, createdAt:now(), updatedAt:now() } as any;
+	return { version:9, workspaceId, items:[], collections:[], groups:[], categories:[], links:[], usage:[], sections:[], events:[], sourceHistory:[], autoLinks:[], entities:[], entityMentions:[], facts:[], factRelations:[], records:[], changeRequests:[], settings:{...LIBRARY_SETTINGS_DEFAULTS}, createdAt:now(), updatedAt:now() } as any;
 }
 
 export async function readLibrary(workspaceId:string) {
 	const db=getSupabaseAdmin();
 	const r=await db.from('orbitfs_library_state').select('state,updated_at').eq('workspace_id',workspaceId).maybeSingle();
 	if(r.error) throw r.error;
-	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:8};
-	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= []; state.settings={...LIBRARY_SETTINGS_DEFAULTS,...(state.settings||{})};
+	const state={...blank(workspaceId),...(r.data?.state||{}),workspaceId,version:9};
+	state.groups ||= []; state.categories ||= []; state.changeRequests ||= []; state.collections ||= [];
+	const rawSettings=state.settings||{};
+	state.settings={...LIBRARY_SETTINGS_DEFAULTS,...rawSettings,
+		ingestMaxItems:Number(rawSettings.ingestMaxItems ?? rawSettings.scanMaxFiles ?? LIBRARY_SETTINGS_DEFAULTS.ingestMaxItems),
+		ingestBatch:Number(rawSettings.ingestBatch ?? rawSettings.scanRegisterBatch ?? LIBRARY_SETTINGS_DEFAULTS.ingestBatch),
+		autoIndexKnowledge:rawSettings.autoIndexKnowledge ?? rawSettings.scanIndexByDefault ?? LIBRARY_SETTINGS_DEFAULTS.autoIndexKnowledge};
 	for(const item of state.items||[]){ item.lifecycleState=lifecycle(item.lifecycleState ?? item.lifecycle); item.lifecycle=item.lifecycleState; item.roles=roles(item.roles); }
 	state.updatedAt=r.data?.updated_at || state.updatedAt;
 	return state;
@@ -99,9 +105,9 @@ export async function updateLibrarySettings(user:OrbitUser,workspaceId:string,in
   state.settings={
     freshnessMs:clampInt(raw.freshnessMs,1000,300000,LIBRARY_SETTINGS_DEFAULTS.freshnessMs),
     maxFreshRefresh:clampInt(raw.maxFreshRefresh,1,2000,LIBRARY_SETTINGS_DEFAULTS.maxFreshRefresh),
-    scanMaxFiles:clampInt(raw.scanMaxFiles,50,10000,LIBRARY_SETTINGS_DEFAULTS.scanMaxFiles),
-    scanRegisterBatch:clampInt(raw.scanRegisterBatch,1,500,LIBRARY_SETTINGS_DEFAULTS.scanRegisterBatch),
-    scanIndexByDefault:raw.scanIndexByDefault!==false,
+    ingestMaxItems:clampInt(raw.ingestMaxItems ?? raw.scanMaxFiles,50,10000,LIBRARY_SETTINGS_DEFAULTS.ingestMaxItems),
+    ingestBatch:clampInt(raw.ingestBatch ?? raw.scanRegisterBatch,1,500,LIBRARY_SETTINGS_DEFAULTS.ingestBatch),
+    autoIndexKnowledge:(raw.autoIndexKnowledge ?? raw.scanIndexByDefault)!==false,
     retrievalLimit:clampInt(raw.retrievalLimit,1,50,LIBRARY_SETTINGS_DEFAULTS.retrievalLimit),
     retrievalMaxChars:clampInt(raw.retrievalMaxChars,500,50000,LIBRARY_SETTINGS_DEFAULTS.retrievalMaxChars),
     analysisMaxItems:clampInt(raw.analysisMaxItems,1,500,LIBRARY_SETTINGS_DEFAULTS.analysisMaxItems),
@@ -111,8 +117,22 @@ export async function updateLibrarySettings(user:OrbitUser,workspaceId:string,in
   return {settings:state.settings,safeguards:LIBRARY_SAFEGUARDS,canManage:true};
 }
 
+function effectiveLifecycle(item:any,policy:any){
+	if(!policy)return item.lifecycleState||item.lifecycle||'unclassified';
+	if(policy.state==='archive')return 'archived';
+	if(policy.state==='superseded')return 'old';
+	if(policy.state==='draft')return 'draft';
+	if(policy.usage==='reference')return policy.state==='final'?'final':'reference_only';
+	if(policy.state==='final')return policy.protection==='locked'?'final_locked':'final';
+	return 'current';
+}
+function architectureBoost(policy:any){
+	if(!policy)return 0;
+	return (policy.usage==='primary'?18:4)+(policy.state==='active'?12:policy.state==='final'?8:policy.state==='draft'?2:-8)+Number(policy.priority||0)/10;
+}
 export async function presentLibrary(user:OrbitUser,workspaceId:string) {
-	const [state,ctx]=await Promise.all([readLibrary(workspaceId),libraryContext(user,workspaceId)]);
+	const [state,ctx,architecture]=await Promise.all([readLibrary(workspaceId),libraryContext(user,workspaceId),getKnowledgeArchitecture(workspaceId)]);
+	for(const item of state.items||[]){const policy=resolveKnowledgeItemPolicy(architecture,item.id);item.knowledgeArchitecture=policy;item.effectiveLifecycleState=effectiveLifecycle(item,policy);item.effectiveLoadMode=policy?.usage==='primary'&&Number(policy?.priority||0)>=80?'full':'smart';}
 	const stats={ items:state.items.length, collections:state.collections.length, groups:state.groups.length, categories:state.categories.length, links:state.links.length, sections:state.sections.length, events:state.events.length, records:state.records.length, facts:state.facts.length, relations:state.factRelations.length, changeRequests:state.changeRequests.length };
 	return {...state,roleDefinitions:LIBRARY_ROLES,lifecycleDefinitions:LIBRARY_LIFECYCLE_DEFINITIONS,canManage:ctx.canManage,members:ctx.members,stats};
 }
@@ -122,26 +142,40 @@ function requireManage(canManage:boolean) {
 }
 export async function createLibraryItem(user:OrbitUser,workspaceId:string,input:any) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId);
-	const provider=text(input.provider || input.source?.provider || (input.profileId?'base.profiles':'memory.knowledge'),120);
-	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:(provider==='library.native'||provider==='memory.knowledge')?{knowledgeId:text(input.documentId||input.knowledgeId||crypto.randomUUID(),160)}:{path:normalizePath(input.path),sourceKind:text(input.sourceKind||'file',32)});
+	const provider=text(input.provider || input.source?.provider || (input.profileId?'base.profiles':'library.native'),120);
+	if(provider==='base.files')throw Object.assign(new Error('File-backed Knowledge registration is retired. Store canonical content in Library/Memory instead.'),{status:410,code:'LIBRARY_FILE_PROVIDER_RETIRED'});
+	if(!['library.native','memory.knowledge','base.profiles'].includes(provider))throw Object.assign(new Error('Unsupported Library provider'),{status:400,code:'LIBRARY_PROVIDER_UNSUPPORTED'});
+	const locator=input.source?.locator || (provider==='base.profiles'?{profileId:text(input.profileId,160)}:{knowledgeId:text(input.documentId||input.knowledgeId||crypto.randomUUID(),160)});
 	const key=`${provider}:${JSON.stringify(locator)}`; const existing=state.items.find((x:any)=>`${x.source?.provider}:${JSON.stringify(x.source?.locator||{})}`===key);
 	if(existing) return {item:existing,existing:true};
 	const item:any={ id:uid('lib'),workspaceId,kind:provider==='base.profiles'?'profile':(provider==='library.native'||provider==='memory.knowledge')?'knowledge':text(locator.sourceKind||'file',32),name:text(input.name || locator.path || locator.profileId || 'Untitled document',180),description:text(input.description,1000),category:text(input.category,120),tags:list(input.tags),purposes:list(input.purposes),aliases:list(input.aliases),importance:Number(input.importance ?? .5),status:text(input.status||'active',32),lifecycle:lifecycle(input.lifecycleState ?? input.lifecycle),lifecycleState:lifecycle(input.lifecycleState ?? input.lifecycle),roles:roles(input.roles),visibility:text(input.visibility||'workspace',32),viewerIds:Array.isArray(input.viewerIds)?input.viewerIds:[],editorIds:Array.isArray(input.editorIds)?input.editorIds:[],ownerUserId:user.id,versionLabel:text(input.versionLabel,80),guards:input.guards||{},metadata:input.metadata||{},groupId:input.groupId||null,currentTarget:input.currentTarget===true,targetPriority:Number(input.targetPriority??50),content:(provider==='library.native'||provider==='memory.knowledge')?String(input.content||''):undefined,contentFormat:(provider==='library.native'||provider==='memory.knowledge')?text(input.contentFormat||'markdown',32):undefined,source:{provider,locator},createdAt:now(),updatedAt:now(),createdBy:user.username };
-	state.items.push(item); await saveLibrary(workspaceId,state); return {item,existing:false};
+	state.items.push(item); await saveLibrary(workspaceId,state);
+	if(['library.native','memory.knowledge'].includes(provider)&&state.settings?.autoIndexKnowledge!==false&&!item.guards?.indexingLocked){
+		const indexed=await indexLibraryItem(user,workspaceId,item.id).catch(()=>null);
+		if(indexed?.item)return {item:indexed.item,existing:false,indexed:true};
+	}
+	return {item,existing:false,indexed:false};
 }
 
 export async function updateLibraryItem(user:OrbitUser,workspaceId:string,id:string,input:any) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const item=state.items.find((x:any)=>x.id===id);
 	if(!item) throw Object.assign(new Error('Knowledge item not found'),{status:404});
+	const architecture=await getKnowledgeArchitecture(workspaceId),policy=resolveKnowledgeItemPolicy(architecture,id);
+	if(input.content!==undefined&&(policy?.protection==='locked'||['archive','superseded'].includes(String(policy?.state||''))))throw Object.assign(new Error('Knowledge Setup protects this content from direct writes'),{status:423,code:'KNOWLEDGE_ITEM_LOCKED',knowledgePolicy:policy});
 	for(const key of ['name','description','category','status','visibility','versionLabel']) if(input[key]!==undefined) item[key]=text(input[key],key==='description'?1000:180);
 	for(const key of ['tags','purposes','aliases']) if(input[key]!==undefined) item[key]=list(input[key]);
 	if(input.roles!==undefined) item.roles=roles(input.roles); if(input.lifecycle!==undefined || input.lifecycleState!==undefined){ item.lifecycle=lifecycle(input.lifecycleState ?? input.lifecycle); item.lifecycleState=item.lifecycle; }
 	for(const key of ['importance','viewerIds','editorIds','guards','metadata','groupId','currentTarget','targetPriority']) if(input[key]!==undefined) item[key]=input[key];
 	if(['library.native','memory.knowledge'].includes(item.source?.provider)&&input.content!==undefined) item.content=String(input.content); if(['library.native','memory.knowledge'].includes(item.source?.provider)&&input.contentFormat!==undefined)item.contentFormat=text(input.contentFormat,32);
-	item.updatedAt=now(); item.updatedBy=user.username; await saveLibrary(workspaceId,state); return {item};
+	const contentChanged=['library.native','memory.knowledge'].includes(item.source?.provider)&&input.content!==undefined;
+	item.updatedAt=now(); item.updatedBy=user.username; await saveLibrary(workspaceId,state);
+	if(contentChanged&&state.settings?.autoIndexKnowledge!==false&&!item.guards?.indexingLocked){const indexed=await indexLibraryItem(user,workspaceId,id).catch(()=>null);if(indexed?.item)return {item:indexed.item,indexed:true};}
+	return {item,indexed:false};
 }export async function deleteLibraryItem(user:OrbitUser,workspaceId:string,id:string,force=false) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const item=state.items.find((x:any)=>x.id===id);
 	if(!item) throw Object.assign(new Error('Knowledge item not found'),{status:404});
+	const architecture=await getKnowledgeArchitecture(workspaceId),policy=resolveKnowledgeItemPolicy(architecture,id);
+	if(policy?.protection==='locked'&&!force)throw Object.assign(new Error('Knowledge Setup protects this item from removal'),{status:423,code:'KNOWLEDGE_ITEM_LOCKED'});
 	if(item.guards?.removalLocked && !force) throw Object.assign(new Error('Knowledge item removal is locked'),{status:423});
 	state.items=state.items.filter((x:any)=>x.id!==id); state.sections=state.sections.filter((x:any)=>x.itemId!==id); state.events=state.events.filter((x:any)=>x.itemId!==id); state.records=state.records.filter((x:any)=>x.itemId!==id); state.facts=state.facts.filter((x:any)=>x.itemId!==id); state.links=state.links.filter((x:any)=>x.sourceItemId!==id&&x.targetItemId!==id); state.usage=state.usage.filter((x:any)=>x.itemId!==id);
 	for(const c of state.collections) c.entries=(c.entries||[]).filter((e:any)=>e.itemId!==id);
@@ -180,53 +214,45 @@ export async function deleteEvent(user:OrbitUser,workspaceId:string,id:string) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const before=state.events.length; state.events=state.events.filter((x:any)=>x.id!==id); if(before===state.events.length) throw Object.assign(new Error('Knowledge event not found'),{status:404}); await saveLibrary(workspaceId,state); return {deleted:true,id};
 }
 
-const scanExt=new Set(['.md','.txt','.json','.csv','.log','.html','.xml','.yaml','.yml','.pdf','.docx']);
-export async function scanLibraryFiles(user:OrbitUser,workspaceId:string,input:any={}) {
-	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const db=getSupabaseAdmin(); const root=normalizePath(input.path||''); const max=Math.max(1,Math.min(500,Number(input.maxFiles)||250));
-	const r=await db.from('orbitfs_files').select('path,name,kind,size_bytes,updated_at').eq('workspace_id',workspaceId).eq('kind','file').is('deleted_at',null).order('path'); if(r.error) throw r.error;
-	const state=await readLibrary(workspaceId); const registered=new Map<string,any>(state.items.filter((x:any)=>x.source?.provider==='base.files').map((x:any)=>[String(x.source.locator?.path||'').toLowerCase(),x])); const candidates:any[]=[]; let visitedFiles=0;
-	for(const row of r.data??[]) { const path=normalizePath(row.path); if(root && path!==root && !path.startsWith(`${root}/`)) continue; visitedFiles++; const ext=path.includes('.')?path.slice(path.lastIndexOf('.')).toLowerCase():''; if(!scanExt.has(ext)) continue; const perms=await permissionsForPath(user,workspaceId,path); if(!perms.read) continue; const existing=registered.get(path.toLowerCase()); candidates.push({path,name:row.name,extension:ext,size:Number(row.size_bytes||0),modifiedAt:row.updated_at,registered:Boolean(existing),itemId:existing?.id||null,itemName:existing?.name||null,indexable:true}); if(candidates.length>=max) break; }
-	return {candidates,visitedFiles,newCount:candidates.filter(x=>!x.registered).length,truncated:candidates.length>=max};
-}async function sourceText(workspaceId:string,item:any) {
+export async function scanLibraryFiles(_user:OrbitUser,_workspaceId:string,_input:any={}) {
+	throw Object.assign(new Error('Filesystem scanning is retired in OrbitFS Cloud. Ingest content into Library/Memory instead.'),{status:410,code:'LIBRARY_SCAN_RETIRED'});
+}
+async function sourceText(_workspaceId:string,item:any) {
 	if(['library.native','memory.knowledge'].includes(item.source?.provider)) return String(item.content||'');
-	if(item.source?.provider!=='base.files') throw Object.assign(new Error('This Library source is not text-indexable'),{status:415});
-	const path=normalizePath(item.source.locator?.path); const entry=await findEntry(workspaceId,path); if(!entry||entry.kind!=='file') throw Object.assign(new Error('Knowledge source does not exist'),{status:404});
-	const bytes=await readEntryBytes(entry); const lower=path.toLowerCase();
-	if(lower.endsWith('.pdf')) { const {getDocument}=await import('pdfjs-dist/legacy/build/pdf.mjs'); const doc=await getDocument({data:new Uint8Array(bytes)}).promise; const pages:string[]=[]; for(let n=1;n<=doc.numPages;n++){const p=await doc.getPage(n);const c=await p.getTextContent();pages.push(c.items.map((x:any)=>x.str||'').join(' '));} return pages.join('\n\n'); }
-	if(lower.endsWith('.docx')) { const mammoth=(await import('mammoth')).default; return String((await mammoth.extractRawText({buffer:bytes})).value||''); }
-	return bytes.toString('utf8');
+	if(item.source?.provider==='base.files') throw Object.assign(new Error('Legacy file-backed Knowledge is read-only compatibility data and cannot be indexed as canonical Library content.'),{status:410,code:'LIBRARY_FILE_PROVIDER_RETIRED'});
+	throw Object.assign(new Error('This Library source is not text-indexable'),{status:415});
 }
 
 export async function indexLibraryItem(user:OrbitUser,workspaceId:string,id:string) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const item=state.items.find((x:any)=>x.id===id); if(!item) throw Object.assign(new Error('Knowledge item not found'),{status:404}); if(item.guards?.indexingLocked) throw Object.assign(new Error('Knowledge indexing is locked'),{status:423});
+	if(!['library.native','memory.knowledge'].includes(item.source?.provider))throw Object.assign(new Error('Only native Library/Memory knowledge is indexed by the canonical cloud index'),{status:415,code:'LIBRARY_NATIVE_INDEX_REQUIRED'});
 	const content=(await sourceText(workspaceId,item)).replace(/\r\n?/g,'\n'); const lines=content.split('\n'); const sections:any[]=[]; let current:any={title:item.name,lineStart:1,level:1,lines:[]};
 	const flush=(lineEnd:number)=>{const body=current.lines.join('\n').trim(); if(!body)return; const sectionKey=`${id}:${current.lineStart}:${current.title}`; sections.push({id:`sec_${crypto.createHash('sha256').update(sectionKey).digest('hex').slice(0,24)}`,workspaceId,itemId:id,title:current.title,level:current.level,headingPath:[current.title],lineStart:current.lineStart,lineEnd,preview:body.slice(0,500),wordCount:body.split(/\s+/).filter(Boolean).length,__content:body,indexedAt:now()});};
 	for(let i=0;i<lines.length;i++){const m=lines[i].match(/^(#{1,6})\s+(.+)/);if(m){flush(i);current={title:m[2].trim(),lineStart:i+1,level:m[1].length,lines:[]};}else current.lines.push(lines[i]);} flush(lines.length);
 	const profiles=await profileCatalog(workspaceId,ctx.role,user.id,user.role).catch(()=>({profiles:[]})); const intel=buildKnowledgeIntelligence({store:state,item,sections,profileCatalog:profiles}); const records=buildStructuredRecords({item,sections:intel.sections,entities:intel.entities,mentions:intel.mentions,previousRecords:state.records||[]});
-	state.sections=state.sections.filter((x:any)=>x.itemId!==id).concat(intel.sections.map((s:any)=>({...s,content:s.__content||s.content||'',__content:undefined})));
+	state.sections=state.sections.filter((x:any)=>x.itemId!==id).concat(intel.sections.map((section:any)=>({...section,content:section.__content||section.content||'',__content:undefined})));
 	state.events=state.events.filter((x:any)=>x.itemId!==id||x.origin!=='indexer').concat(intel.events); state.entities=intel.entities; state.entityMentions=(state.entityMentions||[]).filter((x:any)=>x.itemId!==id).concat(intel.mentions); state.facts=(state.facts||[]).filter((x:any)=>x.itemId!==id).concat(intel.facts); state.records=(state.records||[]).filter((x:any)=>x.itemId!==id).concat(records);
 	state.factRelations=buildFactRelations(state.facts,state.factRelations||[]); const relationLinks=factRelationLinks(state.factRelations,state.autoLinks||[]); state.autoLinks=[...(state.autoLinks||[]).filter((x:any)=>x.sourceItemId!==id&&x.targetItemId!==id&&x.origin!=='fact_engine'),...intel.links,...relationLinks];
-	item.sectionCount=intel.sections.length; item.eventCount=intel.events.length; item.recordCount=records.length; item.entityMentionCount=intel.mentions.length; item.factCount=intel.facts.length; item.relationCount=state.factRelations.filter((x:any)=>x.sourceItemId===id||x.targetItemId===id).length; item.indexedAt=now(); item.sourceTracking={size:Buffer.byteLength(content),signature:crypto.createHash('sha256').update(content).digest('hex')}; state.sourceHistory.push({id:uid('chg'),itemId:id,indexedAt:now(),kind:'indexed',addedSections:intel.sections.length,changedSections:0,removedSections:0}); await saveLibrary(workspaceId,state); return {item,sections:state.sections.filter((x:any)=>x.itemId===id),events:intel.events,facts:intel.facts,records,indexed:true};
-}export async function registerScannedFiles(user:OrbitUser,workspaceId:string,input:any) {
-	const paths=Array.isArray(input.paths)?input.paths:[]; const added:any[]=[]; const existing:any[]=[]; const errors:any[]=[];
-	for(const raw of paths){const path=normalizePath(raw);try{const result=await createLibraryItem(user,workspaceId,{provider:'base.files',path,sourceKind:'file',name:path.split('/').pop()||path,category:'General',purposes:['Context','Search','Retrieval']});(result.existing?existing:added).push({path,item:result.item});if(!result.existing) await indexLibraryItem(user,workspaceId,result.item.id).catch(()=>{});}catch(error:any){errors.push({path,error:error?.message||String(error)});}}
-	return {added,existing,errors};
+	item.sectionCount=intel.sections.length; item.eventCount=intel.events.length; item.recordCount=records.length; item.entityMentionCount=intel.mentions.length; item.factCount=intel.facts.length; item.relationCount=state.factRelations.filter((x:any)=>x.sourceItemId===id||x.targetItemId===id).length; item.indexedAt=now(); item.sourceTracking={size:Buffer.byteLength(content),signature:crypto.createHash('sha256').update(content).digest('hex'),indexedAt:now(),sourceFormat:item.contentFormat||'markdown'}; state.sourceHistory.push({id:uid('chg'),itemId:id,indexedAt:now(),kind:'indexed',addedSections:intel.sections.length,changedSections:0,removedSections:0}); await saveLibrary(workspaceId,state); return {item,sections:state.sections.filter((x:any)=>x.itemId===id),events:intel.events,facts:intel.facts,records,indexed:true};
+}
+export async function registerScannedFiles(_user:OrbitUser,_workspaceId:string,_input:any) {
+	throw Object.assign(new Error('Filesystem registration is retired in OrbitFS Cloud. Create or import Library knowledge instead.'),{status:410,code:'LIBRARY_SCAN_RETIRED'});
 }
 
 export async function retrieveLibrary(user:OrbitUser,workspaceId:string,input:any) {
-	await libraryContext(user,workspaceId); const state=await readLibrary(workspaceId); const q=text(input.query,500).toLowerCase(); const limit=Math.max(1,Math.min(50,Number(input.limit)||12)); const collectionId=text(input.collectionId,160); let allowed:Set<string>|null=null;
+	await libraryContext(user,workspaceId); const [state,architecture]=await Promise.all([readLibrary(workspaceId),getKnowledgeArchitecture(workspaceId)]); const q=text(input.query,500).toLowerCase(); const limit=Math.max(1,Math.min(50,Number(input.limit)||12)); const collectionId=text(input.collectionId,160); let allowed:Set<string>|null=null;
 	if(collectionId){const c=state.collections.find((x:any)=>x.id===collectionId); if(c) allowed=new Set((c.entries||[]).map((e:any)=>e.itemId));}
-	const words=q.split(/\s+/).filter(Boolean); const results=state.sections.filter((s:any)=>!allowed||allowed.has(s.itemId)).map((s:any)=>{const item=state.items.find((x:any)=>x.id===s.itemId);const hay=`${s.title} ${s.preview} ${s.content||''}`.toLowerCase();const lexical=words.reduce((n,w)=>n+(hay.includes(w)?1:0),0);const score=lexical*10+retrievalIntelligenceBoost(q,item||{},s,state.entities||[],state.entityMentions||[],state.facts||[]);return {...s,score,item};}).filter((x:any)=>!words.length||x.score>0).sort((a:any,b:any)=>b.score-a.score).slice(0,limit);
+	const words=q.split(/\s+/).filter(Boolean); const results=state.sections.filter((s:any)=>!allowed||allowed.has(s.itemId)).map((s:any)=>{const item=state.items.find((x:any)=>x.id===s.itemId);const hay=`${s.title} ${s.preview} ${s.content||''}`.toLowerCase();const lexical=words.reduce((n,w)=>n+(hay.includes(w)?1:0),0);const policy=item?resolveKnowledgeItemPolicy(architecture,item.id):null;const score=lexical*10+retrievalIntelligenceBoost(q,item||{},s,state.entities||[],state.entityMentions||[],state.facts||[])+architectureBoost(policy);return {...s,score,item};}).filter((x:any)=>!words.length||x.score>0).sort((a:any,b:any)=>b.score-a.score).slice(0,limit);
 	return {query:input.query||'',results,count:results.length};
 }
 
 export async function exportLibrary(workspaceId:string) {
-	const state=await readLibrary(workspaceId); return {schema:'orbitfs-library-pack-v1',exportedAt:now(),workspaceId,items:state.items,collections:state.collections,links:state.links.filter((x:any)=>x.origin!=='automatic')};
+	const state=await readLibrary(workspaceId); return {schema:'orbitfs-library-pack-v2',exportedAt:now(),workspaceId,items:state.items,collections:state.collections,links:state.links.filter((x:any)=>x.origin!=='automatic')};
 }
 
 export async function importLibrary(user:OrbitUser,workspaceId:string,pack:any) {
-	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); if(pack?.pack) pack=pack.pack; if(pack?.schema!=='orbitfs-library-pack-v1') throw Object.assign(new Error('Unsupported Library pack'),{status:400});
-	let importedItems=0,importedCollections=0,importedLinks=0; for(const item of pack.items||[]){const r=await createLibraryItem(user,workspaceId,{...item,source:item.source,provider:item.source?.provider});if(!r.existing) importedItems++;} for(const c of pack.collections||[]){await createCollection(user,workspaceId,c);importedCollections++;} for(const l of pack.links||[]){try{await createLink(user,workspaceId,l);importedLinks++;}catch{}} return {importedItems,importedCollections,importedLinks,errors:[]};
+	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); if(pack?.pack) pack=pack.pack; if(!['orbitfs-library-pack-v1','orbitfs-library-pack-v2'].includes(String(pack?.schema||''))) throw Object.assign(new Error('Unsupported Library pack'),{status:400});
+	let importedItems=0,importedCollections=0,importedLinks=0,mappedItems=0; for(const item of pack.items||[]){if(item.source?.provider==='base.files')continue;const r=await createLibraryItem(user,workspaceId,{...item,source:item.source,provider:item.source?.provider});if(!r.existing) importedItems++;mappedItems++;} for(const c of pack.collections||[]){await createCollection(user,workspaceId,c);importedCollections++;} for(const l of pack.links||[]){try{await createLink(user,workspaceId,l);importedLinks++;}catch{}} return {importedItems,importedCollections,importedLinks,mappedItems,errors:[]};
 }export async function saveUsage(user:OrbitUser,workspaceId:string,input:any) {
 	const ctx=await libraryContext(user,workspaceId); requireManage(ctx.canManage); const state=await readLibrary(workspaceId); const item=state.items.find((x:any)=>x.id===input.itemId); if(!item)throw Object.assign(new Error('Knowledge item not found'),{status:404});
 	let usage=state.usage.find((x:any)=>x.itemId===input.itemId&&x.consumerType===input.consumerType&&x.consumerId===input.consumerId); if(!usage){usage={id:uid('use'),workspaceId,itemId:input.itemId,createdAt:now()};state.usage.push(usage);} Object.assign(usage,{sectionId:input.sectionId||null,consumerType:text(input.consumerType,80),consumerId:text(input.consumerId,180),consumerName:text(input.consumerName||input.consumerId,180),metadata:input.metadata||{},updatedAt:now()}); await saveLibrary(workspaceId,state); return {usage};
@@ -248,10 +274,9 @@ function canonicalRoleTarget(state:any,role:string){
   const matches=(state.items||[]).filter((item:any)=>item.status==='active'&&writableLifecycle(item)&&(item.roles||[]).includes(role));
   return matches.length===1?matches[0]:null;
 }
-async function itemContent(workspaceId:string,item:any){
+async function itemContent(_workspaceId:string,item:any){
   if(['library.native','memory.knowledge'].includes(item.source?.provider))return String(item.content||'');
-  if(item.source?.provider==='base.files')return (await readEntryBytes(workspaceId,normalizePath(item.source?.locator?.path||''))).toString('utf8');
-  throw Object.assign(new Error('Selected Library target is not writable content'),{status:409,code:'KNOWLEDGE_TARGET_NOT_WRITABLE'});
+  throw Object.assign(new Error('Only native Library/Memory knowledge can be an authoritative content target'),{status:409,code:'KNOWLEDGE_TARGET_NOT_WRITABLE'});
 }
 async function prepareApprovalOperation(user:OrbitUser,workspaceId:string,state:any,raw:any,order:number){
   const operation:any={id:uid('op'),order,type:text(raw.type,80),input:JSON.parse(JSON.stringify(raw||{})),status:'pending'};
@@ -320,9 +345,8 @@ async function applyApprovalOperation(user:OrbitUser,workspaceId:string,operatio
     const state=await readLibrary(workspaceId),item=(state.items||[]).find((x:any)=>x.id===operation.target?.itemId);if(!item)throw Object.assign(new Error('Knowledge target not found'),{status:404});
     const current=await itemContent(workspaceId,item),currentHash=crypto.createHash('sha256').update(current).digest('hex');if(currentHash!==operation.expected?.contentHash)throw Object.assign(new Error('Target changed after submission; resubmit against the latest version'),{status:409,code:'KNOWLEDGE_CHANGE_STALE'});
     const next=current+String(operation.after?.append||'');
-    if(['library.native','memory.knowledge'].includes(item.source?.provider)){await updateLibraryItem(user,workspaceId,item.id,{content:next});return {itemId:item.id,provider:item.source.provider};}
-    const path=normalizePath(item.source?.locator?.path||''),perms=await permissionsForPath(user,workspaceId,path);if(!perms.write)throw Object.assign(new Error('Write permission is required for the selected Library target'),{status:403});
-    await writeFileBytes({workspaceId,path,bytes:Buffer.from(next,'utf8'),mimeType:'text/markdown',userId:user.id,preferText:true,upsert:true});await indexLibraryItem(user,workspaceId,item.id);return {itemId:item.id,path};
+    if(!['library.native','memory.knowledge'].includes(item.source?.provider))throw Object.assign(new Error('The selected target is legacy/read-only. Choose native Library/Memory knowledge.'),{status:409,code:'KNOWLEDGE_TARGET_NOT_WRITABLE'});
+    await updateLibraryItem(user,workspaceId,item.id,{content:next});return {itemId:item.id,provider:item.source.provider};
   }
   if(operation.type==='profile_record_add'){
     const ctx=await libraryContext(user,workspaceId),projection=await profileKnowledgeProjection(workspaceId,operation.target.profileId,ctx.role,user.id,user.role),profile=projection.profile;
@@ -368,19 +392,18 @@ export async function deleteLibraryGroup(user:OrbitUser,workspaceId:string,group
 }
 export async function resolveLibraryRoleTargets(user:OrbitUser,workspaceId:string,role:string){
   await requireWorkspaceAccess(user,await getWorkspace(workspaceId));const cleanRole=text(role,64).toLowerCase();if(!roleIds.has(cleanRole))throw Object.assign(new Error('Unknown Library role'),{status:400});const visible=await presentLibrary(user,workspaceId);
-  const targets=(visible.items||[]).filter((item:any)=>item.status==='active'&&writableLifecycle(item)&&(item.roles||[]).includes(cleanRole)).sort((a:any,b:any)=>Number((b.lifecycleState||b.lifecycle)==='current')-Number((a.lifecycleState||a.lifecycle)==='current')||Number(b.currentTarget===true)-Number(a.currentTarget===true)||Number(b.targetPriority||50)-Number(a.targetPriority||50)||String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
-  const currentCount=targets.filter((item:any)=>(item.lifecycleState||item.lifecycle)==='current').length;return {role:cleanRole,definition:LIBRARY_ROLES.find((x)=>x.id===cleanRole),recommended:targets[0]||null,targets,currentCount,ambiguousCurrent:currentCount>1};
+  const targets=(visible.items||[]).filter((item:any)=>item.status==='active'&&['library.native','memory.knowledge','base.profiles'].includes(item.source?.provider)&&writableLifecycle({...item,lifecycleState:item.effectiveLifecycleState||item.lifecycleState})&&(item.roles||[]).includes(cleanRole)).sort((a:any,b:any)=>Number((b.lifecycleState||b.lifecycle)==='current')-Number((a.lifecycleState||a.lifecycle)==='current')||Number(b.currentTarget===true)-Number(a.currentTarget===true)||Number(b.targetPriority||50)-Number(a.targetPriority||50)||String(b.updatedAt||'').localeCompare(String(a.updatedAt||'')));
+  const currentCount=targets.filter((item:any)=>(item.effectiveLifecycleState||item.lifecycleState||item.lifecycle)==='current').length;return {role:cleanRole,definition:LIBRARY_ROLES.find((x)=>x.id===cleanRole),recommended:targets[0]||null,targets,currentCount,ambiguousCurrent:currentCount>1};
 }
 export async function libraryHealth(user:OrbitUser,workspaceId:string){
   await requireWorkspaceAccess(user,await getWorkspace(workspaceId));const state=await readLibrary(workspaceId),visible=await presentLibrary(user,workspaceId),issues:any[]=[];
   for(const item of visible.items||[]){
-    if(item.sourceState?.exists===false)issues.push({severity:'warning',code:'SOURCE_MISSING',itemId:item.id,itemName:item.name,message:'Canonical source is missing.'});
+    if(item.source?.provider==='base.files')issues.push({severity:'info',code:'LEGACY_FILE_SOURCE',itemId:item.id,itemName:item.name,message:'Legacy file-backed Knowledge is compatibility-only and cannot receive authoritative writes.'});
     const invalid=(item.roles||[]).filter((roleId:string)=>{const def=LIBRARY_ROLES.find((r)=>r.id===roleId);return !def||(def.sourceKinds?.length&&!def.sourceKinds.includes(item.kind));});if(invalid.length)issues.push({severity:'warning',code:'INVALID_ROLE_KIND',itemId:item.id,itemName:item.name,roles:invalid,message:'One or more Library roles do not match this source type.'});
-    if(item.currentTarget&&!(item.roles||[]).some((r:string)=>!['core_file','core_profile'].includes(r)))issues.push({severity:'info',code:'PREFERRED_WITHOUT_TARGET_ROLE',itemId:item.id,itemName:item.name,message:'Preferred/current target is set but this item has no destination role.'});
-    if((item.lifecycleState||item.lifecycle)==='final_locked'&&item.source?.provider==='base.files'&&item.guards?.sourceWriteLocked!==true)issues.push({severity:'error',code:'FINAL_SOURCE_UNLOCKED',itemId:item.id,itemName:item.name,message:'Final / Locked file is not enforcing source-write protection.'});
-    if(item.kind!=='folder'&&!item.sourceTracking&&item.source?.provider!=='base.profiles'&&!['archived','deprecated'].includes(item.lifecycleState||item.lifecycle))issues.push({severity:'info',code:'NOT_INDEXED',itemId:item.id,itemName:item.name,message:'Knowledge source has not been indexed yet.'});
+    if(item.currentTarget&&!(item.roles||[]).some((r:string)=>!['core_knowledge','core_profile'].includes(r)))issues.push({severity:'info',code:'PREFERRED_WITHOUT_TARGET_ROLE',itemId:item.id,itemName:item.name,message:'Preferred/current target is set but this item has no destination role.'});
+    if(item.kind==='knowledge'&&!item.sourceTracking&&!['archived','deprecated'].includes(item.effectiveLifecycleState||item.lifecycleState||item.lifecycle))issues.push({severity:'info',code:'NOT_INDEXED',itemId:item.id,itemName:item.name,message:'Knowledge source has not been indexed yet.'});
   }
-  for(const role of LIBRARY_ROLES.filter((r)=>!['core_file','core_profile'].includes(r.id))){const current=(visible.items||[]).filter((item:any)=>item.status==='active'&&(item.roles||[]).includes(role.id)&&(item.lifecycleState||item.lifecycle)==='current');if(current.length>1)issues.push({severity:'warning',code:'MULTIPLE_CURRENT_TARGETS',role:role.id,itemIds:current.map((x:any)=>x.id),message:`${current.length} Current targets are assigned to ${role.label}.`});}
+  for(const role of LIBRARY_ROLES.filter((r)=>!['core_knowledge','core_profile'].includes(r.id))){const current=(visible.items||[]).filter((item:any)=>item.status==='active'&&(item.roles||[]).includes(role.id)&&(item.effectiveLifecycleState||item.lifecycleState||item.lifecycle)==='current');if(current.length>1)issues.push({severity:'warning',code:'MULTIPLE_CURRENT_TARGETS',role:role.id,itemIds:current.map((x:any)=>x.id),message:`${current.length} Current targets are assigned to ${role.label}.`});}
   return {healthy:!issues.some((x)=>x.severity==='error'),issueCount:issues.length,issues,checkedItems:(visible.items||[]).length,updatedAt:state.updatedAt||null};
 }
 

@@ -4,6 +4,7 @@ import type { OrbitUser } from '$lib/server/auth';
 import { getWorkspace, requireWorkspaceAccess } from '$lib/server/workspaces';
 import { profileCatalog } from '$lib/server/workspace-profiles.js';
 import { readLibrary } from '$lib/server/library';
+import { resolveKnowledgeRoute } from '$lib/server/knowledge-architecture';
 
 const norm=(v:any)=>String(v??'').trim();
 const lower=(v:any)=>norm(v).toLowerCase();
@@ -79,8 +80,13 @@ export async function analyzeCloudRouting(user:OrbitUser,workspaceId:string,entr
   if(['general','note','document','mental-health','statement','report','letter'].includes(subtype))suggestions.push(...contentCandidates(safeEntry));
   if(!explicit?.kind?.startsWith('profile')&&profileMatches.length){for(const p of profileMatches.slice(0,3))suggestions.push({kind:'profile_record_add',profileId:p.profileId,profileName:p.profileName,sectionId:profileSectionFor(safeEntry),label:`Profile update -> ${p.profileName}`,confidence:clamp(p.score*.84),action:'append',reason:`${p.reason}; content best fits profile section ${profileSectionFor(safeEntry)}`});}
   if(entry.metadata?.libraryItemId)suggestions.push({kind:'library_item_update',itemId:String(entry.metadata.libraryItemId),label:'Update linked Library document',confidence:.99,action:'update',reason:'Studio entry is explicitly linked to an existing Library item'});
+  const architectureRoute=await resolveKnowledgeRoute(workspaceId,{projectId:entry.metadata?.projectId,projectName:entry.metadata?.projectName,category:entry.category||entry.metadata?.category,name:entry.title,content:safeEntry.content});
+  if(architectureRoute.matched&&architectureRoute.routing!=='never'){
+    const exact=architectureRoute.destinationType==='knowledge';
+    suggestions.push({kind:'knowledge_record_add',role:'general_record_target',itemId:exact?architectureRoute.destinationId:null,label:`Knowledge Setup ? ${architectureRoute.destinationLabel}`,confidence:clamp(Number(architectureRoute.confidence||.7)),action:exact?'create':'review',architectureRoute,reason:`Knowledge Setup matched ${architectureRoute.scope} route ${architectureRoute.category} ? ${architectureRoute.destinationLabel}`});
+  }
   const enriched=suggestions.map((item:any)=>{if(item.kind!=='knowledge_record_add')return item;const match=existingMatch(item,safeEntry,state);return match?{...item,action:'update_candidate',existing:match,confidence:clamp(Math.max(item.confidence,match.score+.18)),reason:`${item.reason}. Similar existing record found: ${match.title||match.id}`}:item;});
   const min=clamp(settings.minConfidence??.55),profileMin=clamp(settings.profileConfidence??min),incidentMin=clamp(settings.incidentConfidence??min),timelineMin=clamp(settings.timelineConfidence??min),max=Math.max(1,Math.min(20,Number(settings.maxSuggestions||8)));
   const threshold=(x:any)=>x.kind==='profile_record_add'?profileMin:x.role==='incident_log'?incidentMin:x.role==='timeline'?timelineMin:min;
-  return {engine:'orbitfs-base-routing-v2-cloud',provider:'deterministic',semanticProvider:null,semanticProviderStatus:'not_configured',matcherType:'deterministic',mode:'serverless',filesystem:false,approvalRequired:true,entryType:subtype,profileMatches,suggestions:dedupe(enriched).filter((x:any)=>Number(x.confidence)>=threshold(x)).slice(0,max),libraryContextSummary:{records:(state.records||[]).length,events:(state.events||[]).length},settings:{minConfidence:min,profileConfidence:profileMin,incidentConfidence:incidentMin,timelineConfidence:timelineMin,maxSuggestions:max,maxCharacters:maxChars}};
+  return {processor:'orbitfs-base-routing-v3-cloud',provider:'deterministic',semanticProvider:null,semanticProviderStatus:'not_configured',matcherType:'deterministic',mode:'serverless',filesystem:false,approvalRequired:true,entryType:subtype,profileMatches,knowledgeArchitectureRoute:architectureRoute,suggestions:dedupe(enriched).filter((x:any)=>Number(x.confidence)>=threshold(x)).slice(0,max),libraryContextSummary:{records:(state.records||[]).length,events:(state.events||[]).length},settings:{minConfidence:min,profileConfidence:profileMin,incidentConfidence:incidentMin,timelineConfidence:timelineMin,maxSuggestions:max,maxCharacters:maxChars}};
 }

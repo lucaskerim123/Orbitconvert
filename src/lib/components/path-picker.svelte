@@ -238,8 +238,8 @@
 					{#if creatingFolder}
 						<form class="flex items-center gap-2" onsubmit={(event) => { event.preventDefault(); createFolder(); }}>
 							<FolderPlus class="size-4 shrink-0 text-muted-foreground" />
-							<input class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" bind:value={newFolderName} placeholder="Folder name" disabled={createBusy} autofocus />
-							<Button type="submit" size="sm" disabled={createBusy || !newFolderName.trim()}>{createBusy ? 'Creatingâ€¦' : 'Create'}</Button>
+							<input class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring" bind:value={newFolderName} placeholder="Folder name" disabled={createBusy} />
+							<Button type="submit" size="sm" disabled={createBusy || !newFolderName.trim()}>{createBusy ? 'Creating?' : 'Create'}</Button>
 							<Button type="button" variant="ghost" size="sm" onclick={() => { creatingFolder = false; newFolderName = ''; }} disabled={createBusy}>Cancel</Button>
 						</form>
 					{:else}
