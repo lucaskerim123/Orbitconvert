@@ -4,12 +4,11 @@ import { getSupabaseAdmin } from '$lib/server/supabase';
 
 export const PANEL_COMPONENT = 'orbitfs_panel';
 const LICENSE_ID = 'primary';
-const DEFAULT_PROVIDER = 'https://license.incendiarynetworks.cc';
-const DEFAULT_VALIDATE_PATH = '/api/license/validate';
+const DEFAULT_PROVIDER = 'https://orbitfs.vercel.app/api/license/v1';
 export const ALLOWED_LICENSE_API_BASES = [
-	'https://license.incendiarynetworks.cc',
-	'https://licenseadmin.incendiarynetworks.cc'
+	'https://orbitfs.vercel.app/api/license/v1'
 ] as const;
+const ALLOWED_ENTITLEMENT_ISSUERS = new Set(['license.incendiarynetworks.cc', 'orbitfs.vercel.app']);
 const PUBLIC_KEY = `-----BEGIN PUBLIC KEY-----
 MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAqAHPTGUEd1LkTFxngD5o
 CiN+YbFIei69WO3PnR7OMYdtxIBShPq3PK+80zFRvhpQzpBtc+CsIQY0WPLmnC9t
@@ -70,12 +69,11 @@ function normalizeApprovedProviderBase(value: string) {
 	try {
 		const parsed = new URL(String(value || '').trim());
 		if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) throw new Error();
-		if (parsed.pathname !== '/' && parsed.pathname !== '') throw new Error();
-		const normalized = `${parsed.protocol}//${parsed.host}`;
+		const normalized = `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/$/, '')}`;
 		if (!(ALLOWED_LICENSE_API_BASES as readonly string[]).includes(normalized)) throw new Error();
 		return normalized;
 	} catch {
-		throw Object.assign(new Error('Licence API URL is not an approved OrbitFS licence endpoint'), { code: 'LICENSE_PROVIDER_NOT_ALLOWED', status: 400 });
+		throw Object.assign(new Error('Licence API URL is not the approved OrbitFS licence endpoint'), { code: 'LICENSE_PROVIDER_NOT_ALLOWED', status: 400 });
 	}
 }
 
@@ -91,12 +89,6 @@ function providerBaseFromRow(row: LicenseRow | null) {
 		try { return normalizeApprovedProviderBase(metadata.providerBase); } catch { /* fall through */ }
 	}
 	return environmentProviderBase();
-}
-
-function validatePath() {
-	const configured = String(env.ORBITFS_LICENSE_VALIDATE_PATH || DEFAULT_VALIDATE_PATH).trim();
-	if (!configured.startsWith('/api/license/') || configured.includes('..') || configured.includes('://')) return DEFAULT_VALIDATE_PATH;
-	return configured;
 }
 
 async function getRow(): Promise<LicenseRow | null> {
@@ -127,24 +119,23 @@ export async function getLicenseProviderDiagnostics() {
 		database = { ok: false, error: String(error?.message || error || 'Database unavailable') };
 	}
 	const providerBase = row ? providerBaseFromRow(row) : environmentBase;
-	const path = validatePath();
 	let provider = { ok: false, status: null as number | null, revision: null as string | null, error: null as string | null };
 	try {
-		const response = await fetch(`${providerBase}/api/license/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
+		const response = await fetch(providerBase, { method: 'GET', signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
 		const payload = await response.json().catch(() => ({}));
 		provider = {
-			ok: response.ok,
+			ok: response.status < 500,
 			status: response.status,
 			revision: payload?.revision ? String(payload.revision) : null,
-			error: response.ok ? null : String(payload?.error || payload?.message || `HTTP ${response.status}`)
+			error: response.status < 500 ? null : String(payload?.error || payload?.message || `HTTP ${response.status}`)
 		};
 	} catch (error: any) {
 		provider = { ok: false, status: null, revision: null, error: String(error?.message || error || 'Provider unreachable') };
 	}
 	return {
 		providerBase,
-		validatePath: path,
-		validateUrl: `${providerBase}${path}`,
+		validatePath: '',
+		validateUrl: providerBase,
 		allowedProviderBases: [...ALLOWED_LICENSE_API_BASES],
 		database,
 		provider,
@@ -185,7 +176,7 @@ function verifyEntitlement(token: string, installationId: string, allowGrace = f
 	const payload = JSON.parse(Buffer.from(payloadPart, 'base64url').toString('utf8')) as EntitlementPayload;
 	const now = Math.floor(Date.now() / 1000);
 	const deadline = allowGrace ? payload.graceUntil : payload.exp;
-	if (payload.iss !== 'license.incendiarynetworks.cc' || payload.aud !== 'orbitfs-runtime' || !deadline || now > deadline) {
+	if (!ALLOWED_ENTITLEMENT_ISSUERS.has(String(payload.iss || '')) || payload.aud !== 'orbitfs-runtime' || !deadline || now > deadline) {
 		throw Object.assign(new Error('Signed entitlement expired or invalid'), { code: 'LICENSE_ENTITLEMENT_EXPIRED' });
 	}
 	if (payload.installationId !== installationId) throw Object.assign(new Error('Entitlement belongs to another installation'), { code: 'LICENSE_INSTALLATION_MISMATCH' });
@@ -244,7 +235,7 @@ async function callProvider(licenseKey: string, installationId: string, activate
 	const headers: Record<string, string> = { 'content-type': 'application/json' };
 	const token = String(env.ORBITFS_LICENSE_API_TOKEN || '').trim();
 	if (token) headers.authorization = `Bearer ${token}`;
-	const response = await fetch(`${providerBase}${validatePath()}`, {
+	const response = await fetch(providerBase, {
 		method: 'POST', headers,
 		body: JSON.stringify({ licenseKey, installationId, components, activate }),
 		signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000))
@@ -276,14 +267,8 @@ async function revisionChanged(row: LicenseRow) {
 	const metadata = { ...(row.metadata || {}) } as Record<string, any>;
 	const lastSignalAt = typeof metadata.lastSignalAt === 'string' ? Date.parse(metadata.lastSignalAt) : 0;
 	if (lastSignalAt && Date.now() - lastSignalAt < signalMs()) return false;
-	try {
-		const response = await fetch(`${providerBaseFromRow(row)}/api/license/revision`, { signal: AbortSignal.timeout(Number(env.ORBITFS_LICENSE_TIMEOUT_MS || 8000)) });
-		if (!response.ok) return false;
-		const revision = (await response.json().catch(() => ({}))).revision;
-		const changed = Boolean(metadata.lastRevision && revision && metadata.lastRevision !== revision);
-		await saveRow({ metadata: { ...metadata, lastSignalAt: nowIso(), lastRevision: revision || metadata.lastRevision || null } });
-		return changed;
-	} catch { return false; }
+	await saveRow({ metadata: { ...metadata, lastSignalAt: nowIso() } });
+	return false;
 }
 
 export async function getPanelLicenseSummary(options: { refresh?: boolean } = {}): Promise<PanelLicenseSummary> {
