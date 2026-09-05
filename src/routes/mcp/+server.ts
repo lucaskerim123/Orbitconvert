@@ -1,15 +1,17 @@
 import type { RequestHandler } from './$types';
-import { dispatchPanelAddonHttp } from '$lib/server/addons/registry';
-import { assertMcpLicensed, getMcpAddonRow } from '$lib/server/mcp-cloud';
 
-const handle: RequestHandler = async ({ request }) => {
-	const addon = await getMcpAddonRow();
-	if (!addon?.installed || !addon?.attached) return new Response('MCP add-on is detached', { status: 404 });
-	try { await assertMcpLicensed(); }
-	catch { return new Response('MCP licence required', { status: 403 }); }
-	return dispatchPanelAddonHttp('mcp', request);
-};
+const moved: RequestHandler = async () => new Response(JSON.stringify({
+	error: 'OrbitFS MCP is hosted by the standalone Vercel MCP service',
+	resource: 'https://orbitconvert-mcp-addon.vercel.app/mcp',
+	protectedResourceMetadata: 'https://orbitconvert-mcp-addon.vercel.app/.well-known/oauth-protected-resource'
+}), {
+	status: 410,
+	headers: {
+		'content-type': 'application/json',
+		'link': '<https://orbitconvert-mcp-addon.vercel.app/mcp>; rel="alternate"'
+	}
+});
 
-export const GET = handle;
-export const POST = handle;
-export const DELETE = handle;
+export const GET = moved;
+export const POST = moved;
+export const DELETE = moved;
