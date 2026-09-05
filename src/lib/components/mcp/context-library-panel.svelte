@@ -9,7 +9,7 @@
   type Entry = { type: 'file' | 'folder' | 'knowledge'; path: string; recursive: boolean; required: boolean; priority: number; attachmentType?: 'path' | 'profile' | 'knowledge'; profileId?: string | null; profileName?: string | null; knowledgeItemId?: string | null; knowledgeItemName?: string | null; loadMode?: string | null };
   type Dependency = { bundleId: string; name?: string; required: boolean };
   type Profile = { id: string; name: string; sourcePath?: string | null; fields?: Record<string, unknown>; restricted?: boolean };
-  type KnowledgeItem = { id:string; name:string; kind:string; roles?:string[]; lifecycle?:string; loadMode?:string; status?:string; source?:any };
+  type KnowledgeItem = { id:string; name:string; kind:string; roles?:string[]; lifecycle?:string; lifecycleState?:string; loadMode?:string; status?:string; source?:any };
   type Bundle = { id: string; name: string; description: string; enabled: boolean; version: number; entryCount?: number; pathEntryCount?: number; profileEntryCount?: number; knowledgeEntryCount?: number; dependencyCount?: number; entries?: Entry[]; dependencies?: Dependency[] };
   let { workspaceIdOverride = '', hideWorkspacePicker = false } = $props<{ workspaceIdOverride?: string; hideWorkspacePicker?: boolean }>();
 
